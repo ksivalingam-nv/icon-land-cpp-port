@@ -1,0 +1,47 @@
+#%#- -*- mode: sh -*- vi: set ft=sh :
+#%#- ICON
+#%#-
+#%#- ---------------------------------------------------------------
+#%#- Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+#%#- Contact information: icon-model.org
+#%#-
+#%#- See AUTHORS.TXT for a list of authors
+#%#- See LICENSES/ for license information
+#%#- SPDX-License-Identifier: BSD-3-Clause
+#%#- ---------------------------------------------------------------
+#%#-
+# $Id: run/mkexp/environments/accelerator_support.tmpl 2 2026-06-11 m221078 $
+#%  set requested = info.accelerators|d(accelerators.sections)|d([])|list
+#%  if requested:
+#%    set numa_list = []
+#%    set nic_list = []
+#%    for i in requested:
+#%      do numa_list.append(accelerators[i].numa)
+#%      if accelerators[i].nic is defined:
+#%        do nic_list.append(accelerators[i].nic)
+#%      endif
+#%    endfor
+requested_count=%{requested|length}
+rank=$(( (%{JOB.task_id_environ} - %{info.task_offset|d(0)})/%{info.task_block_size|d(1)} ))
+rank_default=$(( rank < requested_count ? rank : requested_count ))
+rank_cyclic=$(( rank % requested_count ))
+numanode=( %{numa_list|join(' ')} )
+sockets=( %{requested|join(' ')} '' )
+#%    if nic_list:
+nics=( %{nic_list|join(' ')} )
+#%    endif
+#%    if JOB.debug_level|d(0)|int > 0:
+echo "Compute process $%{JOB.task_id_environ} on $(hostname)"
+#%    endif
+if [[ -n "${sockets[rank_default]}" ]]
+then
+    export %{JOB.visible_environ}=${sockets[rank_default]}
+fi
+#%    if nic_list:
+export UCX_NET_DEVICES=${nics[rank_cyclic]}
+#%    endif
+#%    do command_list.append('numactl')
+#%    do command_list.append('--cpunodebind=${numanode[rank_cyclic]}')
+#%    do command_list.append('--membind=${numanode[rank_cyclic]}')
+#%  endif
+#%#------ requested

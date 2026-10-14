@@ -1,0 +1,205 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+# Implements a before_script that initializes an isolated Python virtual
+# environment and installs required pip packages utilizing GitLab CI caching.
+#
+# The script defines the following shell function:
+#   1. prepare_venv_artifact(): cleans and adapts the virtual environment to be
+#      relocatable for use as a job artifact.
+#
+# Jobs that extend the template must ensure that their runtime environments
+# provide the python3 interpreter with the venv and pip modules available. Jobs
+# that invoke prepare_venv_artifact() additionally require the find, grep, and
+# perl commands.
+#
+.utils:py:
+  extends: .utils:git:ignore
+  variables:
+    # Python 3 interpreter command used to create the virtual environment or
+    # execute pip when the virtual environment is skipped:
+    ICON_CI_UTILS_PY_BASE_PYTHON: python3
+
+    # Absolute path to the target directory for the virtual environment:
+    ICON_CI_UTILS_PY_VENV_PATH: ${ICON_CI_UTILS_GIT_IGNORE_PATH}/venv
+
+    # Boolean that controls whether the virtual environment is activated:
+    ICON_CI_UTILS_PY_VENV_ACTIVATE: true
+
+    # Space-separated list of paths to pip requirement files:
+    ICON_CI_UTILS_PY_PIP_REQUIREMENT: null
+
+    # Space-separated list of paths to pip constraint files:
+    ICON_CI_UTILS_PY_PIP_CONSTRAINT: null
+
+    # Space-separated list of packages to install with pip:
+    ICON_CI_UTILS_PY_PIP_PACKAGES: null
+
+    # Boolean that controls whether the pip module is upgraded before the
+    # installation of other packages:
+    ICON_CI_UTILS_PY_PIP_UPGRADE: true
+
+    # Path inside $CI_PROJECT_DIR to the pip cache directory:
+    #   Hint: to disable caching, nullify this variable and the cache parameter, i.e.
+    #     variables:
+    #       ICON_CI_UTILS_PY_PIP_CACHE_PATH: null
+    #     cache: null
+    ICON_CI_UTILS_PY_PIP_CACHE_PATH: ${ICON_CI_UTILS_GIT_IGNORE_PATH}/pip
+
+    # Internal variables:
+    FORCE_COLOR: 1
+  before_script:
+    - |
+      # !reference [.utils:py, before_script]
+      prepare_venv_artifact ()
+      {
+        (
+          set -u
+          venv_path=${ICON_CI_UTILS_PY_VENV_PATH}
+
+          # Sanity checks:
+          case ${venv_path} in
+            ${CI_PROJECT_DIR}/*) ;;
+            *)
+              icon_ci_log_fatal_msg \
+                "The virtual environment directory '${venv_path}' is not a \
+      subdirectory of the project directory '${CI_PROJECT_DIR}'." ;;
+          esac
+
+          set -x
+
+          # Remove unnecessary files from the artifacts:
+          find "${venv_path}" '(' \
+            -iname '*readme*' \
+            -o -name '__pycache__' \
+            -o -name 'doc' \
+          ')' -prune -exec rm -rf '{}' '+'
+
+          # We hope to never have to handle csh, fish, etc.:
+          rm -f "${venv_path}/bin"/[Aa]ctivate.*
+
+          # Make the activate script reference ${CI_PROJECT_DIR}:
+          perl -i -pe 's|\Q$ENV{CI_PROJECT_DIR}\E|\${CI_PROJECT_DIR}|g' "${venv_path}/bin/activate"
+
+          # Replace the shebangs:
+          find "${venv_path}/bin" -type f -exec perl -i -pe \
+            'if ($. == 1) { s|^#!\s*'"${venv_path}"'/bin/(python[0-9.]*)$|#!/usr/bin/env $1| }' \
+            '{}' ';'
+
+          # Remove non-functional metadata to pass relocatability checks:
+          perl -i -pe 's/^command\s*=.*\n//' "${venv_path}/pyvenv.cfg" 2>/dev/null || true
+
+          # Check that we did not break the environment too much:
+          PYTHONDONTWRITEBYTECODE=1 "${venv_path}/bin/python3" -mpip --isolated check
+        ) 2>&1
+
+        if grep -rnF "${ICON_CI_UTILS_PY_VENV_PATH}" "${ICON_CI_UTILS_PY_VENV_PATH}" 2>&1; then
+          icon_ci_log_warn_msg \
+            "The files above embed the virtual environment prefix '${ICON_CI_UTILS_PY_VENV_PATH}'."
+        fi
+      }
+
+      icon_ci_log_section_start 'Initializing Python environment'
+      (
+        set -ux
+        ${ICON_CI_UTILS_PY_BASE_PYTHON} --version
+      ) 2>&1
+
+      test -z "${ICON_CI_UTILS_PY_VENV_PATH-}" && {
+        icon_ci_log_status_msg 'Skipping virtual environment setup'
+      } || {
+        icon_ci_log_status_msg 'Preparing virtual environment...'
+        (
+          set -ux
+          ${ICON_CI_UTILS_PY_BASE_PYTHON} -mvenv "${ICON_CI_UTILS_PY_VENV_PATH}"
+        )
+
+        test false = "${ICON_CI_UTILS_PY_VENV_ACTIVATE-}" || {
+          icon_ci_log_status_msg 'Activating virtual environment...'
+          icon_ci_log_shopts_push
+          set -ux
+          # We hope to never have to handle csh, fish, etc.:
+          . "${ICON_CI_UTILS_PY_VENV_PATH}/bin/activate"
+          { eval "${icon_ci_log_shopts_pop}"; } 2>/dev/null
+        }
+      } 2>&1
+
+      test -z "${ICON_CI_UTILS_PY_PIP_PACKAGES-}${ICON_CI_UTILS_PY_PIP_REQUIREMENT-}" && {
+        icon_ci_log_status_msg 'Skipping pip package installation'
+      } || (
+        set -u
+
+        test -z "${ICON_CI_UTILS_PY_VENV_PATH-}" && {
+          pip_python=${ICON_CI_UTILS_PY_BASE_PYTHON}
+        } || {
+          pip_python="${ICON_CI_UTILS_PY_VENV_PATH}/bin/python3"
+        }
+
+        test false = "${ICON_CI_UTILS_PY_PIP_UPGRADE-}" && (
+          icon_ci_log_status_msg 'Skipping pip module upgrade'
+          set -ux
+          ${pip_python} -mpip --isolated --version
+        ) || (
+          icon_ci_log_status_msg 'Upgrading pip module...'
+          set -ux
+          ${pip_python} -mpip --isolated --no-cache-dir \
+            install --upgrade pip
+        )
+
+        test -z "${ICON_CI_UTILS_PY_PIP_CACHE_PATH-}" && {
+          icon_ci_log_status_msg 'Skipping pip cache setup'
+          set dummy --no-cache-dir; shift
+        } || {
+          cache_path="${ICON_CI_UTILS_PY_PIP_CACHE_PATH}/pip-cache"
+          set dummy --cache-dir "${cache_path}"; shift
+
+          # Invalidate the cache if the versions of Python and pip or the list
+          # of required packages have changed:
+          cache_key="$(${pip_python} -c \
+      'import sys, pip; print("python:", sys.version, "\npip:", pip.__version__)')
+      ${ICON_CI_UTILS_PY_PIP_PACKAGES-}
+      $(for f in ${ICON_CI_UTILS_PY_PIP_REQUIREMENT-} ${ICON_CI_UTILS_PY_PIP_CONSTRAINT-}; do
+          cat "${f}" 2>/dev/null || continue
+        done)"
+          cache_key_path="${ICON_CI_UTILS_PY_PIP_CACHE_PATH}/pip-cache-key"
+
+          echo "${cache_key}" | diff - "${cache_key_path}" >/dev/null 2>&1 && (
+            icon_ci_log_status_msg "Using cache from '${cache_path}'..."
+            set -x
+            ${pip_python} -mpip --isolated "$@" cache info
+          ) || (
+            icon_ci_log_status_msg "Initializing cache in '${cache_path}'..."
+            set -x
+            rm -rf "${cache_path}"
+            mkdir -p "${cache_path}"
+            echo "${cache_key}" > "${cache_key_path}"
+          )
+        }
+
+        set dummy "$@" install; shift
+        for requirement in ${ICON_CI_UTILS_PY_PIP_REQUIREMENT-}; do
+          set dummy "$@" --requirement "${requirement}"; shift
+        done
+        for constraint in ${ICON_CI_UTILS_PY_PIP_CONSTRAINT-}; do
+          set dummy "$@" --constraint "${constraint}"; shift
+        done
+
+        icon_ci_log_status_msg 'Installing pip packages...'
+        set -ux
+        ${pip_python} -mpip --isolated --verbose "$@" \
+          ${ICON_CI_UTILS_PY_PIP_PACKAGES:+--} ${ICON_CI_UTILS_PY_PIP_PACKAGES-}
+      ) 2>&1
+
+      icon_ci_log_section_end
+  cache:
+    - key: pip-${CI_RUNNER_TAGS}-${CI_JOB_IMAGE}-${CI_JOB_NAME_SLUG}
+      paths:
+        - ${ICON_CI_UTILS_PY_PIP_CACHE_PATH}

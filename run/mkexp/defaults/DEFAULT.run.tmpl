@@ -1,0 +1,586 @@
+#! %{JOB.ksh} #%# -*- mode: sh -*- vi: set ft=sh :
+#%#- ICON
+#%#-
+#%#- ---------------------------------------------------------------
+#%#- Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+#%#- Contact information: icon-model.org
+#%#-
+#%#- See AUTHORS.TXT for a list of authors
+#%#- See LICENSES/ for license information
+#%#- SPDX-License-Identifier: BSD-3-Clause
+#%#- ---------------------------------------------------------------
+#
+# %{EXP_ID}.%{JOB.id}
+#
+# %{mkexp_input}
+#
+# $Id: mkexp/defaults/DEFAULT.run.tmpl 29 2026-06-17 11:01:00Z k202123 $
+#
+# %{VERSIONS_|join('\n# ')}
+#
+#%from 'mkexp/defaults/format.tmpl' import format_files
+#%include ['mkexp/environments/'+ENVIRONMENT+'.tmpl', 'mkexp/environments/DEFAULT.tmpl'] with context
+
+#=============================================================================
+set -euo pipefail
+#%  if JOB.debug_level|d(0)|int > 1:
+set -x
+#%  endif
+
+#%  set INTERVAL = JOB.interval|d(INTERVAL)
+#%  set ATMO_TIME_STEP = JOB.atmo_time_step|d(ATMO_TIME_STEP)
+#%  set OCEAN_TIME_STEP = JOB.ocean_time_step|d(OCEAN_TIME_STEP)
+
+# Variables initialized from config
+#% do VARIABLES_.add('EXP_ID')
+#% do VARIABLES_.add('MODEL_DIR')
+#% do VARIABLES_.add('SCRIPT_DIR')
+#% do VARIABLES_.add('LOG_DIR')
+#% do VARIABLES_.add('WORK_DIR')
+#% do VARIABLES_.add('PREFIX')
+#% do VARIABLES_.add('INITIAL_DATE')
+#% do VARIABLES_.add('FINAL_DATE')
+#% do VARIABLES_.add('INTERVAL')
+#% do VARIABLES_.add('ATMO_TIME_STEP')
+#% do VARIABLES_.add('OCEAN_TIME_STEP')
+#% for var in VARIABLES_|sort:
+#%   if context(var) is defined:
+%{var}='%{context(var)}'
+#%   endif
+#% endfor
+#%#
+
+# Utilities
+UTILS_DIR=$MODEL_DIR/utils
+PATH=$UTILS_DIR:$PATH
+
+# Convenience link to log file
+# - if log file is set, output not a tty, and CI unset or empty
+#%  if JOB.log_file_command:
+LOG_FILE=$(%{JOB.log_file_command})
+#%  else:
+LOG_FILE=
+#%  endif
+if [[ -n "$LOG_FILE" && ! -t 1 && -z "${CI-}" ]]
+then
+    ln -snvf $LOG_FILE $SCRIPT_DIR/%{EXP_ID}.run.log
+fi
+
+#%  if JOB.log_timestamps is set:
+# Support log style output
+pipe=${EXP_ID}_%{JOB.id}_$$.pipe
+mkfifo $pipe
+trap "cd $PWD && rm -f $pipe" EXIT
+timewarp $pipe &
+exec > $pipe 2>&1
+
+#%  endif
+#
+# MPI/Scheduler settings
+#
+
+# Read and compute time control information
+
+start_date_file=$SCRIPT_DIR/$EXP_ID.date
+exp_log_file=$SCRIPT_DIR/$EXP_ID.log
+
+#%  if JOB.entry_point is set:
+if [[ -f $start_date_file ]]
+then
+    exec >&2
+    echo "Oops: you have tried to begin an experiment that had already been started."
+    echo "      Remove '$start_date_file' if you want to continue"
+    exit 1
+fi
+start_date=$INITIAL_DATE
+#%  else:
+read start_date < $start_date_file
+#%  endif
+#%#
+code=$(%{JOB.python3} -c "
+#% include 'mkexp/defaults/mtime.tmpl'
+#% do JOB.update({'log_timestamps': 'false'})
+#% include 'mkexp/defaults/logging.tmpl'
+
+atmo_time_step = '$ATMO_TIME_STEP'
+ocean_time_step = '$OCEAN_TIME_STEP'
+
+class namespace: pass
+
+sh = namespace()
+
+sh.initial_date = mtime.DateTime('$INITIAL_DATE')
+sh.final_date = mtime.DateTime('$FINAL_DATE')
+sh.start_date = mtime.DateTime('$start_date')
+sh.reference_date = sh.initial_date + mtime.TimeDelta('-$INTERVAL')
+sh.next_date = sh.start_date + mtime.TimeDelta('$INTERVAL')
+if sh.next_date > sh.final_date:
+    logging.warning('next date after final date; setting next date to final date')
+    sh.next_date_orig = sh.next_date
+    sh.next_date = sh.final_date
+sh.end_date = sh.next_date + mtime.TimeDelta('-' +
+    (atmo_time_step or ocean_time_step or 'PT0.001S'))
+sh.atmo_reference_jstep = (
+    (sh.initial_date, sh.reference_date)//mtime.TimeDelta(atmo_time_step)
+    if atmo_time_step else None
+)
+sh.ocean_reference_jstep = (
+    (sh.initial_date, sh.reference_date)//mtime.TimeDelta(ocean_time_step)
+    if ocean_time_step else None
+)
+
+for k, v in vars(sh).items():
+    print(f'{k}=\'{v}\'')
+")
+eval "$code"
+
+# Dates used as timestamps
+start_stamp=${start_date%.*}
+start_stamp=${start_stamp//[-:]/}
+end_stamp=${end_date%.*}
+end_stamp=${end_stamp//[-:]/}
+next_stamp=${next_date%.*}
+next_stamp=${next_stamp//[-:]/}
+y0=${start_date%%-*}
+yN=${end_date%%-*}
+
+# Mark current run as started in log
+echo $(date -u +'%Y-%m-%dT%H:%M:%SZ') ${start_date%:*} ${next_date%:*} ${%{JOB.id_environ}-} start >> $exp_log_file
+
+# Show current start date in job configuration
+%{JOB.progress_command} $start_date
+
+# Write namelist files directly to working directory, create this if missing
+
+run_dir=$WORK_DIR/%{JOB.subdir}
+
+#%  if JOB.subdir|d(''):
+if [[ -d $run_dir ]]
+then
+    echo "removing run dir '$run_dir'"
+    rm -fvr $run_dir
+fi
+
+#%    endif
+mkdir -vp $run_dir
+cd $run_dir
+
+#%#-
+#%#-Prepare settings for each process
+#%#-
+#%#-Put settings for active processes (tasks > 0) in a new dictionary.
+#%#-
+#%  set processes = {}
+#%  set total = namespace(tasks=0)
+#%  for process in JOB.processes.sections|d([]) if JOB.processes[process].tasks|d(0)|int:
+#%    set info = JOB.processes[process]
+#%    do processes.update({process: {}})
+#%    set pinfo = processes[process]
+#%    do pinfo.update(info)
+#%    do pinfo.update(id = process|replace('/', '_'))
+#%    do pinfo.update(wrapper = pinfo.id + '.sh')
+#%    do pinfo.update(tasks = info.tasks|int)
+#%    do pinfo.update(tasks_per_node = info.tasks_per_node|int)
+#%    do pinfo.update(node_start = info.node_start|d(0)|int)
+#%    do pinfo.update(node_stop = info.node_stop|d(JOB.nodes)|int)
+#%    do pinfo.update(node_step = info.node_step|d(1)|int)
+#%-   do pinfo.update(nodes = range(pinfo.node_start, pinfo.node_stop, pinfo.node_step)|count)
+#%    set command = info.command|default(MODEL_EXE)
+#%    set command = command if command.startswith('/') else BIN_DIR+'/'+command
+#%    do pinfo.update(command = command)
+#%    set call_command = command
+#%    if JOB.use_wrappers is set:
+#%      set call_command = './' + pinfo.wrapper
+#%    endif
+#%    do pinfo.update(call_command = call_command)
+#%    set total.tasks = total.tasks + pinfo.tasks
+#%  endfor
+#%#-
+#%#-Inheritance
+#%#-
+#%#-defined via name list separated by spaces
+#%#-sorting to make sure parent is evaluated
+#%#-
+#%  for process in processes.keys()|sort:
+#%    set process_items = process|split('/')
+#%    if process_items|length > 1:
+#%      set parent = process_items[:-1]|join('/')
+#%      set info = {}
+#%      do info.update(processes[parent])
+#%      do info.update(processes[process])
+#%      do processes.update({process: info})
+#%    endif
+#%  endfor
+#%#-
+#%#-Aggregate task info of base and inherited processes
+#%#-
+#%#-1. for namelist variables
+#%#-
+#%- set model = namespace()
+#%- set model.tasks = 0
+#%- set model.tasks_per_node = 0
+#%- set nml_processes = {}
+#%  for (process, info) in processes|items if info.is_model is set:
+#%    set nml_process = process|split('/')|first
+#%    if nml_process not in nml_processes:
+#%      do nml_processes.update({nml_process: {'tasks': 0, 'tasks_per_node': 0}})
+#%      set npinfo = nml_processes[nml_process]
+#%      do npinfo.update(nodes = processes[nml_process].nodes)
+#%      do npinfo.update(call_command = processes[nml_process].call_command)
+#%    endif
+#%-   set npinfo = nml_processes[nml_process]
+#%    do npinfo.update(tasks=npinfo.tasks+info.tasks)
+#%    do npinfo.update(tasks_per_node=npinfo.tasks_per_node+info.tasks_per_node)
+#%    set model.tasks = model.tasks + info.tasks
+#%    set model.tasks_per_node = model.tasks_per_node + info.tasks_per_node
+#%  endfor
+#%#-
+#%#-2. for mpmd config
+#%#-
+#%- set mpmd_processes = {}
+#%  for (process, info) in nml_processes|items:
+#%    do mpmd_processes.update({process: {}})
+#%    do mpmd_processes[process].update(tasks = info.tasks)
+#%    do mpmd_processes[process].update(call_command = info.call_command)
+#%  endfor
+#%  for (process, info) in processes|items if info.is_model is not set and info.tasks > 0:
+#%    do mpmd_processes.update({process: {}})
+#%    do mpmd_processes[process].update(tasks = info.tasks)
+#%    do mpmd_processes[process].update(call_command = info.call_command)
+#%  endfor
+#%#-# compute min and max ranks
+#%- set serial = namespace(current=0)
+#%  for (process, info) in mpmd_processes|items:
+#%    set next = serial.current + info.tasks
+#%    do info.update(min_task = serial.current, max_task = next-1)
+#%    set serial.current = next
+#%  endfor
+#%#-
+#%#-Compute min, max rank, group size and increment for master model namelists.
+#%#-
+#%- set model.min_rank = 0
+#%- for (process, info) in nml_processes|items:
+#%-   set tasks_per_node = info.tasks_per_node
+#%-   set total_tasks_per_node = model.tasks_per_node
+#%#-  # If the hostfile is used, keep tasks en-bloc
+#%-   if JOB.use_hostfile is set:
+#%-     set tasks_per_node = info.tasks
+#%-     set total_tasks_per_node = model.tasks
+#%-   endif
+#%-   do info.update(min_rank = model.min_rank)
+#%-   do info.update(rank_group_size = tasks_per_node)
+#%-   do info.update(inc_rank = total_tasks_per_node - tasks_per_node + 1)
+#%-   set max_rank = model.min_rank + (info.tasks//tasks_per_node - 1)*total_tasks_per_node + tasks_per_node - 1
+#%-   do info.update(max_rank = (max_rank, total.tasks - 1)|min)
+#%-   set model.min_rank = model.min_rank + tasks_per_node
+#%- endfor
+# Namelists
+#%#
+#%  for (process, info) in nml_processes|items:
+%{process}_min_rank=%{info.min_rank}
+%{process}_rank_group_size=%{info.rank_group_size}
+%{process}_inc_rank=%{info.inc_rank}
+%{process}_max_rank=%{info.max_rank}
+%{process}_nodes=%{info.nodes}
+
+#%  endfor
+#%  for namelist in namelists.sections if namelists[namelist]['.hide'] is not set and namelist not in namelists['.remove']|d([]):
+cat > '%{namelist}' << EOF
+%{context(namelist|upper|replace('.', '_'))}
+EOF
+
+#%  endfor
+
+# Provide input files
+
+%{format_files(files, 'yr', 'y0', 'yN')}
+
+#% if JOB.debug_level|d(0)|int > 0:
+cat << EOF
+--- begin debug ---
+# Additional debugging information
+
+## Script text
+
+$(cat $(realpath $0))
+
+## Environment
+
+$(env)
+
+## Limits
+
+$(ulimit -a)
+--- end debug ---
+EOF
+
+#% endif
+#%#-
+#%#-Start control jobs in background
+#%#-
+#% for trigger in JOB['.control']|d([])|list:
+#%   set job = (trigger|split|list)[0]
+#%   set type = jobs[job]['.type']
+#%   if loop.first:
+#%#
+# Start control jobs in background
+
+#%   endif
+echo "starting '$EXP_ID.%{job}'"
+$SCRIPT_DIR/$EXP_ID.%{trigger} &
+#%   if loop.last:
+#%#
+#%   endif
+#% endfor
+
+# Ignition sequence starts...
+
+rm -f finish*.status
+
+#%  if JOB.use_hostfile is set:
+(
+    hosts=( $(%{JOB.hostnames_command}) )
+    exec > hostfile
+#%    for (process, info) in processes|items:
+#%      set start = info.node_start|d(0)
+#%      set stop = info.node_stop|d('${#hosts[@]}')
+#%      set step = info.node_step|d(1)
+
+    # Host mapping for "%{process}" process
+
+    total=0
+    for(( h=%{start}; h<%{stop}; h+=%{step} ))
+    do
+        for(( i=0; i<%{info.tasks_per_node} && total<%{info.tasks}; ++i, ++total ))
+        do
+            echo ${hosts[h]}
+        done
+    done
+#%    endfor
+)
+export SLURM_HOSTFILE=hostfile
+
+#%  endif
+#%#------ JOB.use_hostfile
+#%  if JOB.use_wrappers is set:
+# Wrap process settings
+
+#%    for (process, info) in processes|items:
+
+# Wrapper for "%{process}" process
+
+script=%{info.wrapper}
+cat > $script << \EOF
+#! %{JOB.ksh}
+set -euo pipefail
+#%      if JOB.debug_level|d(0)|int > 1:
+cat << EOF1
+--- begin debug ---
+# Additional debugging information for "%{process}" process
+
+## Limits
+
+Stack size: $(ulimit -s)
+Core file size: $(ulimit -c)
+
+--- end debug ---
+EOF1
+set -x
+#%      endif
+#%      set section = info.env
+#%      include 'mkexp/environments/resources/environment.sh.tmpl'
+#%      set command_list = []
+#%      if info.use_accelerators is set:
+#%        include 'mkexp/environments/accelerator_support.tmpl'
+#%      endif
+#%      do command_list.append(info.command)
+exec %{command_list|join(' ')}
+EOF
+chmod +x $script
+
+#%    endfor
+#%  endif
+#%#------ JOB.use_wrappers
+#%#-
+#%#
+#%#-
+#%#-Create command line for different launch methods
+#%#-
+
+# Call processes
+
+#%  set task_list = []
+#%  if JOB.use_mpmd is not set:
+#%    if JOB.use_wrappers is set:
+#%      for (process, info) in processes|items:
+#%        set task_item = []
+#%        if MPI.use_cpus_per_task is set:
+#%          do task_item.extend(['-c', JOB.cpus_per_task])
+#%        endif
+#%        do task_item.extend(['-n', info.tasks, info.call_command])
+#%        do task_list.append(task_item|join(' '))
+#%      endfor
+#%    else:
+#%      set run = namespace()
+#%      for (process, info) in mpmd_processes|items:
+#%        set task_item = []
+#%        if MPI.use_cpus_per_task is set:
+#%          do task_item.extend(['-c', JOB.cpus_per_task])
+#%        endif
+#%        do task_item.extend(['-n', info.tasks, info.call_command])
+#%        do task_list.append(task_item|join(' '))
+#%      endfor
+#%    endif
+#%  else:
+#%    if JOB.use_hostfile is not set:
+#%      do die("using mpmd without using hostfile is currently not implemented")
+#%    endif
+cat > mpmd.conf << EOF
+#%    for (process, info) in mpmd_processes|items:
+%{info.min_task}-%{(info.max_task, total.tasks - 1)|min} %{info.call_command}
+#%    endfor
+EOF
+#%    set task_item = []
+#%    if MPI.use_cpus_per_task is set:
+#%       do task_item.extend(['-c', JOB.cpus_per_task])
+#%    endif
+#%    do task_item.extend(['-n', total.tasks])
+#%    do task_item.extend(['--multi-prog', 'mpmd.conf'])
+#%    do task_list.append(task_item|join(' '))
+#%  endif
+%{MPI.command} %{task_list|join(' : ')}
+#%#
+# Check the model results
+
+for status_file in finish*.status
+do
+    result=$(cat $status_file 2> /dev/null || echo MISSING)
+    result=${result# }
+
+    echo "$status_file: $result"
+
+    if [[ "$result" != "${last_result-$result}" ]]
+    then
+        echo "Sorry: result from $status_file is inconsistent with the last" >&2
+        exit 1
+    fi
+
+    last_result=$result
+done
+finish_status=$last_result
+
+if [[ $finish_status == OK ]]
+then
+    echo "Experiment finished successfully"
+elif [[ $finish_status == RESTART ]]
+then
+    echo "Experiment to be continued"
+else
+    echo 'Sorry: model failure, check error messages' >&2
+    exit 1
+fi
+
+#%#-
+#%#-Handover for restarts
+#%#-
+#%  set atmo_restart = namelists.NAMELIST_atm.run_nml.restart_filename
+#%  set ocean_restart = namelists.NAMELIST_oce.run_nml.restart_filename
+#%  set land_restart = namelists.NAMELIST_lnd.run_nml.restart_filename
+
+#%  set atmo_restart_write = namelists.NAMELIST_atm.io_nml.write_last_restart is set
+#%  set ocean_restart_write = namelists.NAMELIST_oce.io_nml.write_last_restart is set
+#%  set land_restart_write = namelists.NAMELIST_lnd.io_nml.write_last_restart is set
+
+#%  if JOB.subdir|d(''):
+# Handle restart hand-over
+#%    if WITH_ATMO is set:
+if [ -z "${next_date_orig:-}" ] || %{atmo_restart_write|lower}
+then
+    cp -lrfv %{atmo_restart|replace('<rsttime>', '${next_stamp}Z')} $WORK_DIR
+fi
+#%    endif
+#%    if WITH_OCEAN is set:
+if [ -z "${next_date_orig:-}" ] || %{ocean_restart_write|lower}
+then
+    cp -lrfv %{ocean_restart|replace('<rsttime>', '${next_stamp}Z')} $WORK_DIR
+fi
+#%    endif
+#%    if WITH_LAND is set and WITH_ATMO is not set:
+if [ -z "${next_date_orig:-}" ] || %{land_restart_write|lower}
+then
+    cp -lrfv %{land_restart|replace('<rsttime>', '${next_stamp}Z')} $WORK_DIR
+fi
+#%    endif
+#%  endif
+
+#%  if JOB.subdir|d(''):
+#%#
+# Clean up our restart
+#%    if WITH_ATMO is set:
+rm -rfv %{atmo_restart|replace('<rsttime>', '${start_stamp}Z')}
+#%    endif
+#%    if WITH_OCEAN is set:
+rm -rfv %{ocean_restart|replace('<rsttime>', '${start_stamp}Z')}
+#%    endif
+#%    if WITH_LAND is set and WITH_ATMO is not set:
+rm -rfv %{land_restart|replace('<rsttime>', '${start_stamp}Z')}
+#%    endif
+#%  endif
+
+#%#-
+#%#- Handling of non-restart files
+#%#-
+#%  if WITH_OBGC is set:
+# Rename HAMOCC log file
+mv bgcout bgcout_${start_date}
+#%  endif
+
+# Mark current run as successful in log
+echo $(date -u +'%Y-%m-%dT%H:%M:%SZ') ${start_date%:*} ${next_date%:*} ${%{JOB.id_environ}-}  end >> $exp_log_file
+
+cd $SCRIPT_DIR
+set +e
+status=0
+
+#% for trigger in JOB['.trigger']|list:
+#%   set job_args = trigger|split
+#%   set job = job_args[0]
+#%   set args = job_args[1:]|join(' ')
+#%   set info = jobs[job]|d
+#%   set type = info['.type']|d('serial')
+#%   if type == 'restart':
+
+# Update date info for next run
+echo $next_date > $start_date_file
+
+if [ $finish_status = "RESTART" ]
+then
+  (
+#%     if JOB.use_hostfile is set:
+    # Clean SLURM_HOSTFILE
+    unset SLURM_HOSTFILE
+#%     endif
+    next_job=$EXP_ID.%{job}
+    next_job_args='%{args}'
+    next_job_date=${next_job}_$next_date
+    [[ -e $next_job_date ]] && next_job=$next_job_date
+    echo "restart: submitting '$next_job $next_job_args'"
+    %{JOB.batch_command} $next_job $next_job_args
+  ) || status=$?
+fi
+#%   elif type == 'serial':
+echo "running '%{EXP_ID}.%{trigger}'"
+./%{EXP_ID}.%{trigger} $start_date || status=$?
+#%   else:
+echo "submitting '%{EXP_ID}.%{trigger}'"
+(
+  # Clean SLURM environment
+  eval $(%{JOB.python3} -c 'import os
+for key in os.environ:
+    if key.startswith("SLURM_"): print("unset "+key)')
+  %{JOB.batch_command} %{EXP_ID}.%{trigger} $start_date
+) || status=$?
+#%   endif
+#% endfor
+
+exit $status

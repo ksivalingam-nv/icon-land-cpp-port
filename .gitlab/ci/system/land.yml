@@ -1,0 +1,89 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+include:
+  - local: .gitlab/ci/common/dkrz.yml
+  - local: .gitlab/ci/common/analyze.yml
+  - local: .gitlab/ci/experiments/land.yml
+
+.land:cpu:run:
+  extends: .common:dkrz:levante:cpu:icon:run
+  before_script:
+    - !reference [.common:dkrz:levante:cpu:icon:run, before_script]
+    - |
+      # !reference [.land:cpu:run, before_script]
+      module load --verbose cdo
+
+.land:gpu:run:
+  extends: .common:dkrz:levante:gpu:icon:run
+  before_script:
+    - !reference [.common:dkrz:levante:gpu:icon:run, before_script]
+    - |
+      # !reference [.land:gpu:run, before_script]
+      module load --verbose cdo
+
+land:cpu:build:
+  extends: .common:dkrz:levante:icon:build
+  variables:
+    ICON_CI_UTILS_ICON_BUILD_EXTRA_SUBMODULE_PATHS: externals/kokkos
+    ICON_CI_UTILS_ICON_CONFIG_REL_PATH: config/dkrz/levante.intel
+    ICON_CI_UTILS_ICON_CONFIG_EXTRA_ARGS: >-
+      --enable-jsbach --enable-ragnarok --enable-openmp
+
+land:nag:build:
+  extends: .common:dkrz:levante:icon:build
+  variables:
+    ICON_CI_UTILS_ICON_CONFIG_REL_PATH: config/dkrz/levante.nag
+    ICON_CI_UTILS_ICON_CONFIG_EXTRA_ARGS: >-
+      --enable-jsbach
+
+land:gpu:build:
+  extends: .common:dkrz:levante:icon:build
+  variables:
+    ICON_CI_UTILS_ICON_BUILD_EXTRA_SUBMODULE_PATHS: externals/kokkos
+    ICON_CI_UTILS_ICON_CONFIG_REL_PATH: config/dkrz/levante.gpu.nvhpc
+    ICON_CI_UTILS_ICON_CONFIG_EXTRA_ARGS: >-
+      --enable-jsbach --enable-ragnarok
+
+land:jsb-standalone:cpu:run:
+  extends:
+    - .land:cpu:run
+    - .experiments:land:jsb-standalone
+  variables:
+    ICON_CI_COMMON_DKRZ_SLURM_TIMELIMIT: "08:00"
+  needs: [land:cpu:build]
+
+land:jsb-standalone:nag:run:
+  extends:
+    - .land:cpu:run
+    - .experiments:land:jsb-standalone
+  needs: [land:nag:build]
+
+land:jsb-standalone:gpu:run:
+  extends:
+    - .land:gpu:run
+    - .experiments:land:jsb-standalone
+  needs: [land:gpu:build]
+
+land:jsb-standalone:cpu:analyze:
+  extends: .common:analyze:checksum
+  needs: [land:jsb-standalone:cpu:run]
+  rules: !reference [.land:cpu:run, rules]
+
+land:jsb-standalone:nag:analyze:
+  extends: .common:analyze:checksum
+  needs: [land:jsb-standalone:nag:run]
+  rules: !reference [.land:cpu:run, rules]
+
+land:jsb-standalone:gpu:analyze:
+  extends: .common:analyze:checksum
+  needs: [land:jsb-standalone:gpu:run]
+  rules: !reference [.land:gpu:run, rules]

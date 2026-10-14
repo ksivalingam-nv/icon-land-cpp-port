@@ -1,0 +1,190 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: BSD-3-Clause -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICON-Land — application call tree</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f7fb;--surface:#fff;--ink:#202738;--muted:#647086;--line:#e0e5ee;--soft:#f0f3f9;--active:#e8ecff;--accent:#4758bd;--host:#5d6f8b;--land:#137d70;--kokkos:#8a49ad;--warning:#a36513;--shadow:0 8px 32px #1724420a}
+@media(prefers-color-scheme:dark){:root{--bg:#141922;--surface:#1b2230;--ink:#e5eaf4;--muted:#a5b0c2;--line:#333e52;--soft:#242e3f;--active:#303c65;--accent:#acb8ff;--host:#b0c3de;--land:#82ceba;--kokkos:#c9a4ec;--warning:#e1b06a;--shadow:none}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,select{font:inherit;color:inherit}button{cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:3px}button{border:1px solid var(--line);border-radius:7px;background:var(--surface);padding:7px 12px}button:hover{background:var(--soft)}a{color:var(--accent)}h1,h2,h3,p{margin:0}h1{font-size:29px;letter-spacing:-.8px;font-weight:650}h2{font-size:16px;font-weight:600}h3{font-size:13px;font-weight:650}.shell{max-width:1580px;margin:auto;padding:34px 38px 22px}.eyebrow{font-size:11px;font-weight:650;letter-spacing:1.8px;text-transform:uppercase;color:var(--muted);margin-bottom:8px}.heading{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}.subtitle{margin-top:8px;color:var(--muted);max-width:870px}.snapshot{white-space:nowrap;color:var(--muted);font-size:12px;text-align:right;padding-top:8px}.snapshot code{background:var(--soft);padding:3px 6px;border-radius:4px;color:var(--ink)}.scope{display:flex;gap:26px;flex-wrap:wrap;margin:20px 0 24px;color:var(--muted);font-size:12px}.scope strong{font-size:17px;color:var(--ink);margin-right:5px;font-weight:600}.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line)}.tabs button{border:0;background:transparent;border-radius:6px 6px 0 0;color:var(--muted);padding:12px 17px;border-bottom:3px solid transparent}.tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent);background:var(--surface)}.toolbar{padding:16px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.search{flex:1;min-width:200px;position:relative}.search input{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 13px}.toolbar label{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}.toolbar input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px}.toolbar select{max-width:380px;background:var(--surface);border:1px solid var(--line);padding:8px;border-radius:7px}.layout{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:18px;align-items:start}.panel{background:var(--surface);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);overflow:hidden}.panel-header{padding:17px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px}.panel-note{padding:13px 20px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px}.tree-wrap{height:calc(100vh - 365px);min-height:450px;overflow:auto;padding:20px 18px 32px}.tree-list{margin:0;padding:0;list-style:none}.tree-list .tree-list{margin-left:12px;padding-left:20px;border-left:1px solid var(--line)}.tree-list>li{position:relative;margin:4px 0}.tree-list .tree-list>li::before{content:"";position:absolute;left:-20px;top:20px;width:17px;border-top:1px solid var(--line)}.tree-item>summary{list-style:none;cursor:pointer;display:block}.tree-item>summary::-webkit-details-marker{display:none}.tree-row{display:flex;align-items:flex-start;gap:7px;min-height:36px;padding:7px 9px;border-radius:6px;transition:background .12s}.tree-row:hover{background:var(--soft)}.tree-row.selected{background:var(--active)}.caret{width:14px;flex-shrink:0;color:var(--muted);font-size:12px;padding-top:1px}.tree-item[open]>summary .caret{transform:rotate(90deg)}.node-text{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}.phase-text{font:600 13px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.node-main{min-width:0;flex:1}.node-sub{font-size:11px;color:var(--muted);line-height:1.5;margin-top:2px;overflow-wrap:anywhere}.badge{flex-shrink:0;display:inline-block;font-size:10px;line-height:1.5;padding:2px 6px;border-radius:4px;color:var(--muted);background:var(--soft);margin-left:3px;align-self:center;white-space:nowrap}.badge.land{color:var(--land)}.badge.kokkos{color:var(--kokkos)}.badge.host{color:var(--host)}.badge.dynamic,.badge.inferred,.badge.generic{color:var(--warning)}.leaf{width:100%;text-align:left;border:0;background:transparent;padding:0;border-radius:6px}.empty{padding:30px 15px;color:var(--muted)}.detail{position:sticky;top:18px}.detail-body{padding:20px;max-height:calc(100vh - 315px);overflow:auto}.detail-name{font:600 16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere;margin-top:10px}.detail-info{font-size:12px;color:var(--muted);margin:6px 0 14px;overflow-wrap:anywhere}.detail-note{font-size:13px;margin:15px 0;color:var(--ink)}.location{font:11px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);background:var(--soft);padding:10px;border-radius:6px;overflow-wrap:anywhere}.detail-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.detail-actions button{font-size:11px;padding:5px 9px}.detail-section{margin-top:21px}.detail-section h3{margin-bottom:10px}.detail-section pre{font:11px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;overflow:auto;margin:0;padding:12px;background:var(--soft);border-radius:6px;max-height:240px}.edge-link{display:block;text-align:left;width:100%;border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent;padding:8px 0;font-size:12px;overflow-wrap:anywhere}.edge-link small{display:block;color:var(--muted);font-size:10px;margin-top:2px}.legend{display:flex;flex-wrap:wrap;gap:14px;padding:11px 20px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}.dot{display:inline-block;width:7px;height:7px;background:currentColor;border-radius:50%;margin-right:5px}.land-key{color:var(--land)}.kokkos-key{color:var(--kokkos)}.host-key{color:var(--host)}.methodology{margin-top:18px;border-top:1px solid var(--line);padding-top:14px;color:var(--muted);font-size:12px}.methodology summary{cursor:pointer;font-weight:600;color:var(--ink)}.methodology ol{padding-left:22px;max-width:1100px}.methodology li{margin:7px 0}.repo-path{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere;margin:12px 0;color:var(--muted)}.search-results{padding-bottom:12px}.result-button{display:flex;width:100%;text-align:left;justify-content:space-between;gap:14px;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:12px 10px}.result-button code{font-size:12px;overflow-wrap:anywhere}.result-button small{display:block;font-size:11px;color:var(--muted);margin-top:4px}.context-note{background:var(--soft);padding:12px;border-radius:6px;font-size:12px;margin-bottom:17px}.task-num{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:21px;display:inline-block}.hidden{display:none!important}.mini-count{color:var(--muted);font-size:11px;white-space:nowrap}.cycle{color:var(--warning);font-size:11px;padding:7px 10px}#selection-status{font-size:11px;color:var(--muted);padding:0 0 12px}.print-only{display:none}
+@media(max-width:1080px){.shell{padding:24px 20px}.layout{grid-template-columns:minmax(0,1fr) 320px}.snapshot{display:none}.toolbar select{max-width:280px}}
+@media(max-width:760px){.shell{padding:20px 12px}.heading{display:block}h1{font-size:25px}.scope{gap:15px}.tabs button{padding:10px;font-size:12px}.layout{grid-template-columns:1fr}.detail{position:static}.detail-body{max-height:none}.tree-wrap{height:530px;min-height:0}.toolbar{gap:8px}.search{flex-basis:100%}.toolbar select{max-width:100%;width:100%}.panel-header{padding:14px}.tree-wrap{padding:12px 8px}.tree-list .tree-list{margin-left:6px;padding-left:15px}.badge{font-size:9px}.tree-list .tree-list>li::before{left:-15px;width:12px}}
+@media print{body{background:white;color:black}.shell{padding:0}.toolbar,.tabs,.detail-actions{display:none}.layout{display:block}.tree-wrap{height:auto;overflow:visible}.detail{margin-top:20px;position:static}.detail-body{max-height:none}.panel{box-shadow:none}.print-only{display:block}}
+</style>
+<style>
+.tabs [data-tab]{display:inline-block;text-decoration:none;border:0;background:transparent;border-radius:6px 6px 0 0;color:var(--muted);padding:12px 17px;border-bottom:3px solid transparent}.tabs [data-tab][aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent);background:var(--surface)}.tabs [data-tab]:hover{background:var(--soft)}
+.requires-js{display:none}.js-ready .requires-js{display:flex}.js-ready .fallback-only{display:none}.native-section{margin-top:22px;scroll-margin-top:20px}.native-content{padding:18px 20px}.native-content .tree-list .tree-list{padding-left:18px}.native-link{color:inherit;text-decoration:none}.native-link:hover{text-decoration:underline}.source-card{border-bottom:1px solid var(--line);padding:11px 0;scroll-margin-top:20px}.source-card:target{background:var(--active);padding:11px;border-radius:7px}.source-card summary{cursor:pointer;overflow-wrap:anywhere}.source-card summary code{font-size:12px}.source-card small{color:var(--muted);font-size:11px}.source-card pre{background:var(--soft);padding:12px;border-radius:6px;overflow:auto;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}.native-calls{font-size:12px;line-height:1.9;overflow-wrap:anywhere}.native-calls a{margin-right:10px}.native-calls span{color:var(--muted);margin-right:10px}.fallback-tip{font-size:12px;color:var(--muted);margin:12px 0}.native-meta{font-size:11px;color:var(--muted);overflow-wrap:anywhere;margin:9px 0}
+.native-content details[open]>summary .caret,#tree details[open]>summary .caret{transform:rotate(90deg)}
+@media(max-width:760px){.tabs [data-tab]{padding:10px;font-size:12px}.native-content{padding:12px}}
+</style>
+</head>
+<body>
+<main class="shell">
+ <header class="heading">
+  <div><div class="eyebrow">ICON-Land · source architecture</div><h1>Application call tree</h1><p class="subtitle">Explore the standalone land-model lifecycle, scientific task dispatch, and the existing Kokkos bridge.</p></div>
+  <div class="snapshot">Source snapshot · 14 October 2026<br><span id="branch">__BRANCH__</span> · <code id="commit">__COMMIT__</code></div>
+ </header>
+ <div class="scope" id="scope">__NATIVE_COUNTS__</div>
+ <nav class="tabs" role="tablist" aria-label="Call tree views">
+  <a href="#application" role="tab" aria-selected="true" data-tab="application">Application</a>
+  <a href="#tasks" role="tab" aria-selected="false" data-tab="tasks">Scientific tasks</a>
+  <a href="#explorer" role="tab" aria-selected="false" data-tab="explorer">Routine explorer</a>
+  <a href="#bridge" role="tab" aria-selected="false" data-tab="bridge">Kokkos bridge</a>
+ </nav>
+ <div class="toolbar requires-js">
+  <div class="search"><label class="hidden" for="search">Find a routine, module or file</label><input id="search" type="search" placeholder="Find a routine, module or file…" aria-label="Find a routine, module or file" autocomplete="off"></div>
+  <select id="root-picker" class="hidden" aria-label="Root routine"></select>
+  <select id="process-picker" class="hidden" aria-label="Filter task process"><option value="all">All processes</option><option>RAD_</option><option>PHENO_</option><option>HYDRO_</option><option>SEB_</option><option>SSE_</option><option>TURB_</option></select>
+  <label><input id="utilities" type="checkbox">Utility calls</label>
+  <button id="overview">Reset tree</button>
+ </div>
+ <div id="selection-status" aria-live="polite">Select a routine to inspect its source and call sites.</div>
+ <div class="layout" id="application">
+  <section class="panel" aria-label="Expandable call tree">
+   <div class="panel-header"><h2 id="tree-title">Standalone application</h2><span id="tree-count" class="mini-count"></span></div>
+   <p class="panel-note" id="tree-note">Standalone land path. Expand the arrows; select a routine name to jump to its reference below.</p>
+   <div class="tree-wrap" id="tree" aria-label="Call hierarchy">__NATIVE_APPLICATION__</div>
+   <div class="legend"><span class="host-key"><span class="dot"></span>Host infrastructure</span><span class="land-key"><span class="dot"></span>ICON-Land</span><span class="kokkos-key"><span class="dot"></span>C++ / Kokkos bridge</span><span>Candidate = runtime dispatch or overload</span></div>
+  </section>
+  <aside class="panel detail" aria-label="Selected routine">
+   <div class="panel-header"><h2>Routine details</h2><span class="mini-count">Source evidence</span></div>
+   <div class="detail-body" id="detail">__NATIVE_DETAILS__</div>
+  </aside>
+ </div>
+ <section id="tasks" class="panel native-section fallback-only"><div class="panel-header"><h2>Scientific task queue</h2><span class="mini-count">22 entries · source order</span></div><div class="native-content"><p class="fallback-tip">Expand a task to see its integration and aggregation routines.</p>__NATIVE_TASKS__</div></section>
+ <section id="bridge" class="panel native-section fallback-only"><div class="panel-header"><h2>Kokkos bridge</h2></div><div class="native-content">__NATIVE_BRIDGE__</div></section>
+ <section id="explorer" class="panel native-section fallback-only"><div class="panel-header"><h2>Routine reference</h2><span class="mini-count">Land routines and referenced targets</span></div><div class="native-content"><p class="fallback-tip">Use browser Find (⌘F / Ctrl+F) to locate a routine. Expand its reference for source location and calls.</p>__NATIVE_ROUTINES__</div></section>
+ <details class="methodology"><summary>Scope, tracing method, and limitations</summary><ol id="methodology">__NATIVE_METHOD__</ol><p class="repo-path" id="repo-path">__REPO__</p></details>
+</main>
+<script src="icon-land-call-tree-data.js"></script>
+<script>
+(async () => {
+ 'use strict';
+ const encoded=window.ICON_LAND_CALL_DATA;
+ if(!encoded)throw new Error('The companion data file was not loaded');
+ const bytes=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
+ const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+ const data=JSON.parse(await new Response(stream).text());
+ const hydrateFile=x=>x<0?'':data.files[x];
+ Object.values(data.nodes).forEach(n=>{n.file=hydrateFile(n.file)});
+ data.incoming={};
+ for(const [from,edges] of Object.entries(data.edges)){for(const e of edges){
+  e.sites.forEach(s=>{s.file=hydrateFile(s.file)});
+  (data.incoming[e.to]??=[]).push({from,kind:e.kind,label:e.label,line:e.sites[0].line});
+ }}
+ data.tasks.forEach(t=>{t.integrateSite.file=hydrateFile(t.integrateSite.file);t.aggregateSite.file=hydrateFile(t.aggregateSite.file)});
+ const $=id=>document.getElementById(id);
+ const node=data.nodes, graph=data.edges;
+ const state={tab:'application',root:data.lifecycle.id,selected:null,utility:false,process:'all',query:'',open:new Set(),closed:new Set(),depth:2};
+ const labels={direct:'call',function:'function',binding:'bound method',dispatch:'candidate',dynamic:'dynamic',inferred:'name match',generic:'overload',bridge:'C ABI',cpp:'C++ call',callback:'callback',external:'external'};
+ const names={application:'Standalone application',tasks:'Scientific task queue',explorer:'Routine call hierarchy',bridge:'Fortran ↔ C++ / Kokkos'};
+ const notes={application:'Retained standalone land path. Phase headings group source calls; initialization alternatives and event-driven work depend on configuration.',tasks:'22 queue entries in source order. Each active task integrates the required tiles and aggregates parents. The snow/wet-fraction task appears twice.',explorer:'Static CALL statements and lexical function references. Build guards are retained; generic, inferred and unresolved edges are explicitly labeled.',bridge:'Current runtime initialization and host-service callbacks. C++ land-physics kernels are not connected to the task queue yet.'};
+ const utility=/^(message|finish|timer_|new_timer|debug_on|timer_on|deallocate|datetime|timedelta|get_model$|get_grid$|int2string$|real2string$|assign_if_present$|get_omp_thread$|is_omp_inside_serial$|c_f_pointer$|getptstring)/i;
+ function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
+ function badge(text,cls){return el('span','badge '+(cls||''),text)}
+ function nodeCategory(n){return n.area.startsWith('land-')?'land':n.area==='kokkos'?'kokkos':n.area==='host'?'host':''}
+ function areaLabel(n){if(n.area.startsWith('land-'))return n.area.slice(5).replaceAll('_',' ');return n.area==='kokkos'?'Kokkos':n.area==='host'?'host':n.area==='external'?'external':'unresolved'}
+ function visibleEdges(id){return (graph[id]||[]).filter(e=>state.utility||!utility.test(node[e.to].name))}
+ function reference(e){return {id:e.to,label:e.label,edge:e}}
+ function children(item){if(item.children?.length)return item.children;return item.id?visibleEdges(item.id).map(reference):[]}
+ function setTab(tab){state.tab=tab;state.query='';$('search').value='';renderTabs();renderTree()}
+ function renderTabs(){document.querySelectorAll('[data-tab]').forEach(b=>{b.setAttribute('aria-selected',String(b.dataset.tab===state.tab));b.tabIndex=b.dataset.tab===state.tab?0:-1});$('root-picker').classList.toggle('hidden',state.tab!=='explorer');$('process-picker').classList.toggle('hidden',state.tab!=='tasks')}
+ let rows=0;
+ function branch(item,path,depth,seen){
+  const li=el('li');const n=item.id?node[item.id]:null;const isCycle=item.id&&seen.has(item.id);const next=new Set(seen);if(item.id)next.add(item.id);
+  const kids=isCycle?[]:children(item);const has=kids.length>0;
+  const row=el('div','tree-row'+(state.selected===item.id?' selected':''));row.dataset.nodeId=item.id||'';
+  row.append(el('span','caret',has?'›':isCycle?'↻':'·'));
+  const main=el('div','node-main');main.append(el('div',item.phase?'phase-text':'node-text',item.label||(n?n.name:'')));
+  if(item.task)main.append(el('div','node-sub',item.task.type+' · '+(item.task.order===10?'second snow/wet-fraction update':'integrate → aggregate')));
+  else if(item.note)main.append(el('div','node-sub',item.note));
+  else if(n?.kind==='dynamic')main.append(el('div','node-sub','Runtime receiver; expand to see known task targets where available.'));
+  row.append(main);
+  if(n){row.append(badge(item.edge?labels[item.edge.kind]||item.edge.kind:areaLabel(n),item.edge?item.edge.kind:nodeCategory(n)))}
+  if(isCycle)row.append(badge('cycle','dynamic'));
+  const select=()=>{if(item.id)showDetail(item.id,item.edge,item.note)};
+  if(has){
+   const d=el('details','tree-item');const summary=el('summary');summary.append(row);summary.addEventListener('click',select);d.append(summary);
+   let made=false;
+   const make=()=>{if(made)return;made=true;const ul=el('ul','tree-list');
+     const displayed=kids.slice(0,90);
+     displayed.forEach((child,i)=>{if(rows>1800)return;rows++;ul.append(branch(child,path+'/'+i,depth+1,next))});
+     if(kids.length>90)ul.append(el('li','cycle',(kids.length-90)+' additional overloads/targets are available in Routine details.'));
+     d.append(ul)};
+   d.addEventListener('toggle',()=>{if(d.open){state.open.add(path);state.closed.delete(path);make()}else{state.open.delete(path);state.closed.add(path)}});
+   const defaultOpen=depth<state.depth||item.phase&&depth<3;
+   if(state.open.has(path)||defaultOpen&&!state.closed.has(path)){make();d.open=true}
+   li.append(d);
+  }else{const b=el('button','leaf');b.type='button';b.append(row);b.addEventListener('click',select);li.append(b)}
+  return li;
+ }
+ function taskRoots(){return data.tasks.filter(t=>state.process==='all'||t.process===state.process).map(t=>({
+   label:String(t.order).padStart(2,'0')+' · '+t.name,id:t.constructor,task:t,
+   children:[{id:t.integrate,label:'Integrate → '+node[t.integrate].name,edge:{kind:'dispatch',sites:[t.integrateSite]}},
+             {id:t.aggregate,label:'Aggregate → '+node[t.aggregate].name,edge:{kind:'dispatch',sites:[t.aggregateSite]}}]
+ }))}
+ function roots(){if(state.tab==='application')return[data.lifecycle];if(state.tab==='tasks')return taskRoots();if(state.tab==='bridge')return[data.bridge];return[{id:state.root,label:node[state.root].name}]}
+ function renderTree(){
+  $('tree-title').textContent=names[state.tab];$('tree-note').textContent=notes[state.tab];$('tree').replaceChildren();rows=0;
+  if(state.query.trim()){renderSearch();return}
+  const ul=el('ul','tree-list');roots().forEach((item,i)=>ul.append(branch(item,state.tab+'/'+(state.tab==='explorer'?state.root+'/':'')+i,0,new Set())));$('tree').append(ul);
+  $('tree-count').textContent=state.tab==='tasks'?taskRoots().length+' queue entries':state.tab==='explorer'?(graph[state.root]||[]).length+' outgoing edges':'expand to explore';
+ }
+ function renderSearch(){
+  const words=state.query.toLowerCase().trim().split(/\s+/);
+  const matches=Object.values(node).filter(n=>n.kind!=='interface'&&words.every(w=>(n.name+' '+n.module+' '+n.file).toLowerCase().includes(w)))
+    .sort((a,b)=>Number(b.name.toLowerCase().startsWith(words[0]))-Number(a.name.toLowerCase().startsWith(words[0]))||Number(b.area.startsWith('land-'))-Number(a.area.startsWith('land-'))||a.name.localeCompare(b.name));
+  $('tree-title').textContent='Matching routines';$('tree-count').textContent=matches.length+' matches';$('tree-note').textContent='Select a match to inspect it and open its call hierarchy. Search includes all indexed source branches.';
+  if(!matches.length){$('tree').append(el('p','empty','No matching routine. Try a process, module or shorter name.'));return}
+  const wrap=el('div','search-results');matches.slice(0,120).forEach(n=>{const b=el('a','result-button');b.href='#routine='+n.id;const t=el('span');t.append(el('code','',n.name));t.append(el('small','',n.module+(n.file?' · '+n.file+':'+n.line:'')));b.append(t,badge(areaLabel(n),nodeCategory(n)));b.addEventListener('click',e=>{e.preventDefault();navigate(n.id)});wrap.append(b)});
+  if(matches.length>120)wrap.append(el('p','empty','Showing the first 120 results. Refine the search to narrow the list.'));$('tree').append(wrap);
+ }
+ function focus(id){state.root=id;setTab('explorer');$('root-picker').value=id;showDetail(id)}
+ function navigate(id){if(!node[id])return;try{history.pushState(null,'','#routine='+encodeURIComponent(id))}catch{}focus(id)}
+ function showDetail(id,fromEdge=null,context=''){
+  state.selected=id;const n=node[id];const dest=$('detail');dest.replaceChildren();dest.append(badge(n.language==='unknown'?n.kind:n.language+' · '+n.kind,nodeCategory(n)));
+  const heading=el('h2','detail-name');n.name.split('_').forEach((part,i,all)=>{heading.append(document.createTextNode(part+(i<all.length-1?'_':'')));if(i<all.length-1)heading.append(el('wbr'))});dest.append(heading);dest.append(el('p','detail-info',n.module||'Program scope'));
+  if(context)dest.append(el('p','context-note',context));
+  if(n.note)dest.append(el('p','detail-note',n.note));
+  if(n.file)dest.append(el('div','location',n.file+':'+n.line+(n.end>n.line?' · ends at line '+n.end:'')));
+  else dest.append(el('p','detail-info',n.kind==='dynamic'?'Runtime call target; source is attached to its call site.':'External or unresolved definition; source is attached to its call site.'));
+  const actions=el('div','detail-actions');const focusButton=el('button','','Focus tree here');focusButton.addEventListener('click',()=>focus(id));actions.append(focusButton);
+  if(n.file){const b=el('button','','Copy source location');b.addEventListener('click',async()=>{const text=data.repo+'/'+n.file+':'+n.line;try{await navigator.clipboard.writeText(text);b.textContent='Copied'}catch{const ta=el('textarea');ta.value=text;document.body.append(ta);ta.select();document.execCommand('copy');ta.remove();b.textContent='Copied'}});actions.append(b);if(data.repositoryUrl){const link=el('a','badge','Open source on GitHub');link.href=data.repositoryUrl+'/blob/'+encodeURIComponent(data.branch)+'/'+n.file.split('/').map(encodeURIComponent).join('/')+'#L'+n.line;link.target='_blank';link.rel='noopener noreferrer';actions.append(link)}}dest.append(actions);
+  if(n.guards?.length){const s=section('Build guards');s.append(el('p','detail-info',n.guards.join(' → ')));dest.append(s)}
+  if(fromEdge?.sites?.length){const s=section('Selected call site · '+(labels[fromEdge.kind]||fromEdge.kind));fromEdge.sites.slice(0,4).forEach(site=>{
+    s.append(el('div','detail-info',site.file+':'+site.line));if(site.code)s.append(el('pre','',site.code));if(site.guards?.length)s.append(el('p','detail-info',site.guards.join(' → ')))});dest.append(s)}
+  if(n.snippet){const s=section('Declaration and source context');s.append(el('pre','',n.snippet));dest.append(s)}
+  const out=graph[id]||[];
+  const s=section('Calls / candidate targets · '+out.length);
+  if(!out.length)s.append(el('p','detail-info','No outgoing call edge was recorded. This does not imply the routine has no numerical work.'));
+  out.slice(0,100).forEach(e=>{const b=el('a','edge-link',node[e.to].name);b.href='#routine='+e.to;const site=e.sites[0];b.append(el('small','',(labels[e.kind]||e.kind)+' · line '+site.line+(e.count>1?' · '+e.count+' source occurrences':'')));b.addEventListener('click',event=>{event.preventDefault();navigate(e.to);showDetail(e.to,e)});s.append(b)});dest.append(s);
+  const inc=data.incoming[id]||[];const inbound=section('Referenced by · '+inc.length);
+  if(!inc.length)inbound.append(el('p','detail-info','No incoming edge recorded, or a curated entry point.'));
+  inc.slice(0,30).forEach(e=>{const b=el('a','edge-link',node[e.from].name);b.href='#routine='+e.from;b.append(el('small','',node[e.from].module+' · line '+e.line));b.addEventListener('click',event=>{event.preventDefault();navigate(e.from)});inbound.append(b)});if(inc.length>30)inbound.append(el('p','detail-info','Showing the first 30 callers.'));dest.append(inbound);
+  document.querySelectorAll('.tree-row').forEach(r=>r.classList.toggle('selected',r.dataset.nodeId===id));
+  $('selection-status').textContent=n.name+(n.file?' · '+n.file+':'+n.line:' · '+n.kind);
+ }
+ function section(title){const s=el('section','detail-section');s.append(el('h3','',title));return s}
+ $('branch').textContent=data.branch;$('commit').textContent=data.commit.slice(0,7);
+ $('scope').replaceChildren();[[data.stats.files,'Fortran files indexed'],[data.stats.routines,'routine definitions'],[data.tasks.length,'queued tasks']].forEach(([v,label])=>{const span=el('span');span.append(el('strong','',v.toLocaleString()),document.createTextNode(label));$('scope').append(span)});
+ $('methodology').replaceChildren();data.methodology.forEach(t=>$('methodology').append(el('li','',t)));$('repo-path').textContent='Repository: '+data.repo+' · commit '+data.commit;
+ const routineList=Object.values(node).filter(n=>n.file&&n.kind!=='interface').sort((a,b)=>a.name.localeCompare(b.name));
+ routineList.forEach(n=>{const o=el('option','',n.name+' — '+n.module);o.value=n.id;$('root-picker').append(o)});$('root-picker').value=state.root;
+ document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',event=>{if(!document.documentElement.classList.contains('js-ready'))return;event.preventDefault();setTab(b.dataset.tab)}));
+ document.querySelector('.tabs').addEventListener('keydown',e=>{if(!['ArrowRight','ArrowLeft','Home','End'].includes(e.key))return;e.preventDefault();const tabs=[...document.querySelectorAll('[data-tab]')];let i=tabs.findIndex(t=>t.getAttribute('aria-selected')==='true');i=e.key==='Home'?0:e.key==='End'?tabs.length-1:(i+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;setTab(tabs[i].dataset.tab);tabs[i].focus()});
+ $('root-picker').addEventListener('change',e=>{state.root=e.target.value;renderTree();showDetail(state.root)});
+ $('process-picker').addEventListener('change',e=>{state.process=e.target.value;renderTree()});
+ $('utilities').addEventListener('change',e=>{state.utility=e.target.checked;renderTree()});
+ $('overview').addEventListener('click',()=>{state.open.clear();state.closed.clear();state.query='';$('search').value='';renderTree()});
+ let debounce; $('search').addEventListener('input',e=>{state.query=e.target.value;clearTimeout(debounce);debounce=setTimeout(renderTree,100)});
+ renderTabs();renderTree();showDetail(data.lifecycle.children[1].children[1].children[0].id);
+ function restoreHash(){const match=location.hash.match(/^#routine(?:=|-)(.+)$/);if(match){const id=decodeURIComponent(match[1]);if(node[id])focus(id)}}
+ window.addEventListener('hashchange',restoreHash);restoreHash();
+ window.CALL_TREE_DEBUG={data,state,focus,renderTree};
+ document.documentElement.classList.add('js-ready');
+})().catch(error=>{document.getElementById('selection-status').textContent='The native call tree and links are available below. Enhanced search could not start: '+error.message;console.warn(error)});
+</script>
+</body>
+</html>

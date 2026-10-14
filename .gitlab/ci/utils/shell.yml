@@ -1,0 +1,228 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+# Implements a before_script that isolates the execution environment using a
+# fake home directory and checks whether the user shell profile modifies
+# environment variables during login shell initialization.
+#
+# Jobs that extend the template must ensure that their runtime environments
+# provide the /usr/bin/mkdir, /usr/bin/python3, /usr/bin/env, and
+# /usr/bin/printf executables, as well as the shell executable specified via the
+# ICON_CI_UTILS_SHELL_PATH variable.
+#
+.utils:shell:homeless:
+  variables:
+    # Absolute path to the fake home directory created to isolate tool
+    # configurations from the actual user home directory:
+    ICON_CI_UTILS_SHELL_FAKE_HOME_PATH: ${CI_PROJECT_DIR}/.fake_home
+
+    # Controls the action taken when environment modifications by the user
+    # profile are detected ('error', 'warn', or 'skip'):
+    ICON_CI_UTILS_SHELL_CHECK_PROFILE: error
+
+    # Name of the environment variable used by user shell profiles to skip
+    # environment modifications during CI job execution:
+    ICON_CI_UTILS_SHELL_CHECK_BYPASS_VAR: null
+
+    # Space-separated list of additional environment variable names passed to
+    # both baseline and user login shell checks. Used to neutralize system-level
+    # profile side-effects. Each variable retains its value from the current
+    # environment or defaults to '1' if unset:
+    ICON_CI_UTILS_SHELL_CHECK_EXTRA_BYPASS_VARS: null
+
+    # Absolute path to the shell executable used for verification (only bash is
+    # supported):
+    ICON_CI_UTILS_SHELL_PATH: /bin/bash
+
+    # Ignore ~/.curlrc:
+    CURL_HOME: ${ICON_CI_UTILS_SHELL_FAKE_HOME_PATH}
+    # Ignore ~/.gitconfig:
+    GIT_CONFIG_GLOBAL: /dev/null
+    # Ignore ~/.ssh/* and prevent ssh-agent fallback:
+    GIT_SSH_COMMAND: ssh -F /dev/null -o IdentitiesOnly=yes
+    # Ignore ~/.pip/pip.conf and ~/.config/pip/pip.conf:
+    PIP_CONFIG_FILE: /dev/null
+    # Ignore ~/.local/lib/python*:
+    PYTHONNOUSERSITE: 1
+    # Ignore ~/.spack/*:
+    SPACK_DISABLE_LOCAL_CONFIG: 1
+    # Ignore ~/.wgetrc:
+    WGETRC: /dev/null
+    # Isolate tools following the XDG Base Directory Specification:
+    XDG_CACHE_HOME: ${ICON_CI_UTILS_SHELL_FAKE_HOME_PATH}/.cache
+    XDG_CONFIG_HOME: ${ICON_CI_UTILS_SHELL_FAKE_HOME_PATH}/.config
+    XDG_DATA_HOME: ${ICON_CI_UTILS_SHELL_FAKE_HOME_PATH}/.local/share
+    XDG_STATE_HOME: ${ICON_CI_UTILS_SHELL_FAKE_HOME_PATH}/.local/state
+  before_script:
+    - |
+      # !reference [.utils:shell:homeless, before_script]
+      icon_ci_log_status_msg 'Initializing fake home directory...'
+      icon_ci_log_shopts_push
+      set -ux
+      /usr/bin/mkdir -p \
+        "${ICON_CI_UTILS_SHELL_FAKE_HOME_PATH}/.cache" \
+        "${ICON_CI_UTILS_SHELL_FAKE_HOME_PATH}/.config" \
+        "${ICON_CI_UTILS_SHELL_FAKE_HOME_PATH}/.local/share" \
+        "${ICON_CI_UTILS_SHELL_FAKE_HOME_PATH}/.local/state"
+      { eval "${icon_ci_log_shopts_pop}"; } 2>/dev/null
+      (
+        set -u
+
+        if test skip = "${ICON_CI_UTILS_SHELL_CHECK_PROFILE-}"; then
+          icon_ci_log_status_msg \
+            'Skipping the check of the environment modifications by the user profile'
+        else
+          icon_ci_log_status_msg \
+            'Checking whether the user profile modifies the environment...'
+
+          message=$(
+            set -x
+            /usr/bin/python3 -I - <<\EOF 2>&1
+      import os
+      import pwd
+      import subprocess
+
+      icon_ci_shell = os.environ["ICON_CI_UTILS_SHELL_PATH"]
+      fake_home = os.environ["ICON_CI_UTILS_SHELL_FAKE_HOME_PATH"]
+
+      primary_bypass = os.environ.get("ICON_CI_UTILS_SHELL_CHECK_BYPASS_VAR")
+      bypass_vars = os.environ.get(
+          "ICON_CI_UTILS_SHELL_CHECK_EXTRA_BYPASS_VARS", ""
+      ).split()
+      if primary_bypass:
+          bypass_vars.append(primary_bypass)
+
+      base_env = {
+          **{v: os.environ.get(v, "1") for v in bypass_vars},
+          "USER": os.environ["USER"],
+          "BASH_ENV": "",
+          "ENV": "",
+      }
+
+      START_MARKER = b"__ICON_CI_ENV_START__\0"
+      END_MARKER = b"\0__ICON_CI_ENV_END__\0"
+
+
+      def env(home):
+          return dict(
+              x.split(b"=", 1)
+              for x in subprocess.check_output(
+                  [
+                      icon_ci_shell,
+                      "-l",
+                      "-c",
+                      "/usr/bin/printf '__ICON_CI_ENV_START__\\0';"
+                      "/usr/bin/env -0;"
+                      "/usr/bin/printf '\\0__ICON_CI_ENV_END__\\0'",
+                  ],
+                  env={**base_env, "HOME": home},
+                  stderr=subprocess.DEVNULL,
+              )
+              .split(START_MARKER, 1)[1]
+              .split(END_MARKER, 1)[0]
+              .rstrip(b"\0")
+              .split(b"\0")
+              if b"=" in x
+          )
+
+
+      actual_home = os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir
+      user = env(actual_home)
+      clean = {
+          k: v.replace(fake_home.encode(), actual_home.encode())
+          for k, v in env(fake_home).items()
+      }
+
+      added = user.keys() - clean
+      removed = clean.keys() - user
+      changed = {k for k in clean.keys() & user if clean[k] != user[k]}
+
+      message = []
+
+      if added:
+          message.append("Variables added by the user profile:")
+          message.extend(
+              "\t{0}={1}".format(k.decode(), user[k].decode()) for k in sorted(added)
+          )
+
+      if removed:
+          message.append("Variables removed by the user profile:")
+          message.extend("\t{0}".format(k.decode()) for k in sorted(removed))
+
+      if changed:
+          message.append("Variables modified by the user profile:")
+          for k in sorted(changed):
+              message.extend(
+                  [
+                      "\t{0}:".format(k.decode()),
+                      "\t\tbefore: {0}".format(clean[k].decode()),
+                      "\t\tafter:  {0}".format(user[k].decode()),
+                  ]
+              )
+
+      if message:
+          target_file = None
+
+          for f in (".bash_profile", ".bash_login", ".profile"):
+              path = os.path.join(actual_home, f)
+              if os.path.isfile(path) and os.access(path, os.R_OK):
+                  target_file = "~/{0}".format(f)
+                  break
+
+          if target_file:
+              if primary_bypass:
+                  message = [
+                      "User profile modifies the CI environment "
+                      "(see the end of the message for a fix):",
+                      *message,
+                      "\xa0",
+                      "To prevent this in CI jobs, add the following line at the "
+                      "beginning of {0}:".format(target_file),
+                      '\ttest -z "${{{0}-}}" || return'.format(primary_bypass),
+                  ]
+              else:
+                  message = [
+                      "User profile modifies the CI environment:",
+                      *message,
+                  ]
+          else:
+              message = [
+                  "Contents of your home directory affect system shell "
+                  "initialization (e.g. via /etc/profile):",
+                  *message,
+                  "\xa0",
+                  "System initialization scripts are reacting to the presence of "
+                  "specific files or directories in your home directory. Identify "
+                  "the tool causing this behavior and add the appropriate variables "
+                  "to ICON_CI_UTILS_SHELL_CHECK_EXTRA_BYPASS_VARS to tolerate the "
+                  "side effect.",
+              ]
+
+          print("\n".join(message))
+      EOF
+          ) || {
+            message="Profile verification failed:
+      ${message}"
+          }
+
+          test -z "${message}" || {
+            case ${ICON_CI_UTILS_SHELL_CHECK_PROFILE-} in
+              warn) icon_ci_log_warn_msg "${message}" ;;
+              *) icon_ci_log_fatal_msg "${message}" ;;
+            esac
+          }
+        fi
+      ) 2>&1
+      icon_ci_log_shopts_push
+      set -ux
+      HOME=${ICON_CI_UTILS_SHELL_FAKE_HOME_PATH}
+      export HOME
+      { eval "${icon_ci_log_shopts_pop}"; } 2>/dev/null

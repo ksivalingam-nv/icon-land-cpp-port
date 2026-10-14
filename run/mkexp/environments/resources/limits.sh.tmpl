@@ -1,0 +1,24 @@
+#%#- -*- mode: sh -*-
+#%#- ICON
+#%#-
+#%#- ---------------------------------------------------------------
+#%#- Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+#%#- Contact information: icon-model.org
+#%#-
+#%#- See AUTHORS.TXT for a list of authors
+#%#- See LICENSES/ for license information
+#%#- SPDX-License-Identifier: BSD-3-Clause
+#%#- ---------------------------------------------------------------
+#%- extends 'mkexp/environments/resources/format.tmpl'
+#%  block prologue:
+# $Id: run/mkexp/environments/resources/limits.sh.tmpl 1 2026-06-08 16:37:02Z m221078 $
+#%  endblock
+#%  block set:
+#%  set option = {'stack': '-s', 'core': '-c'}[var]
+#%  if option is not defined:
+#%    do die("limit '{0}' not supported".format(var))
+#%  endif
+ulimit %{option} %{val}
+#%- endblock
+#%  block unset:
+#%- endblock

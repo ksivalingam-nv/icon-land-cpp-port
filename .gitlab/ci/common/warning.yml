@@ -1,0 +1,62 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+include:
+  - local: .gitlab/ci/common/docker.yml
+
+# Implements a template for a warning job: the job is allowed to fail and always
+# does, which is supposed to alert the developers. At the same time, the
+# pipeline does not fail.
+#
+# The job can optionally emit an error message to the log. The text of the
+# message can be set via the ICON_CI_COMMON_WARNING_MESSAGE variable (defaults
+# to an empty string, which means that no message is emitted).
+#
+.common:warning:
+  extends: .common:docker:any-image
+  stage: warnings
+  needs: []
+  variables:
+    # Internal variables:
+    GIT_STRATEGY: none
+  allow_failure: true
+  script:
+    - |
+      # !reference [.common:warning, script]
+      test -z "${ICON_CI_COMMON_WARNING_MESSAGE-}" || {
+        icon_ci_log_warn_msg "${ICON_CI_COMMON_WARNING_MESSAGE}"
+      }
+      exit 1
+
+# Implements a template for a warning job that runs when a GitLab CI/CD resource
+# is inactive. The job is allowed to fail and always does, which is supposed to
+# bring the developer's attention to the fact that some jobs in the pipeline are
+# disabled. At the same time, the pipeline does not fail.
+#
+# Jobs that extend the template are expected to be named and implemented as
+# follows:
+#   include:
+#     - project: icon/ci-tooling/icon-builders-status
+#       ref: status
+#       file: <resource-group>.yml
+#   "'<resource-group>:<resource-name>' is inactive":
+#     extends: .common:warning:resource_inactive
+#     rules:
+#       - !reference [.status:<resource-group>:<resource-name>:if_inactive, rules]
+# where <resource-group> and <resource-name> are the respective Group and Name
+# from the "GitLab CI/CD resource status" table at
+# https://icon.gitlab-pages.dkrz.de/ci-tooling/icon-builders-status.
+#
+.common:warning:resource_inactive:
+  extends: .common:warning
+  variables:
+    ICON_CI_COMMON_WARNING_MESSAGE: >
+      ${CI_JOB_NAME}, see https://icon.gitlab-pages.dkrz.de/ci-tooling/icon-builders-status

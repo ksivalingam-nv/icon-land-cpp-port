@@ -1,0 +1,33 @@
+#%#- -*- mode: sh -*-
+#%#- ICON
+#%#-
+#%#- ---------------------------------------------------------------
+#%#- Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+#%#- Contact information: icon-model.org
+#%#-
+#%#- See AUTHORS.TXT for a list of authors
+#%#- See LICENSES/ for license information
+#%#- SPDX-License-Identifier: BSD-3-Clause
+#%#- ---------------------------------------------------------------
+#%- block prologue scoped:
+# $Id: run/mkexp/environments/resources/format.tmpl 2 2026-06-08 16:38:10Z m221078 $
+#%  endblock
+#%#-  if section is not defined:
+#%#-    do die("section is not defined")
+#%#-  endif
+#%  for var in section:
+#%    for line in section.comments[var]:
+%{line}
+#%    endfor
+#%    set val = section[var]|list|join(",")
+#%    if val:
+#%      block set scoped required:
+#%-     endblock
+#%    else:
+#%      block unset scoped:
+#%-     endblock
+#%    endif
+#%    set inline_comment = section.inline_comments[var]
+%{' '+inline_comment if inline_comment}
+#%  endfor
+#%#

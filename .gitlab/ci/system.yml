@@ -1,0 +1,42 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+include:
+  - local: .gitlab/ci/common/dkrz.yml
+  - local: .gitlab/ci/common/docker.yml
+  - local: .gitlab/ci/common/analyze.yml
+
+analyze:checksum:update:
+  extends: .common:analyze:checksum:update
+  needs:
+    - land:jsb-standalone:cpu:analyze
+    - land:jsb-standalone:gpu:analyze
+    - land:jsb-standalone:nag:analyze
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - !reference [.common:dkrz:levante:gpu:icon:run, rules]
+
+Accept new checksums:
+  extends:
+    - .common:docker:alpine
+    - .utils:git:push
+  stage: system
+  needs: [analyze:checksum:update]
+  variables:
+    ICON_CI_COMMON_DOCKER_ALPINE_PACKAGES: git
+    ICON_CI_UTILS_GIT_PUSH_REL_PATH: >-
+      ${ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH_env}
+  when: manual
+  rules:
+    - if: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == null && $CI_COMMIT_BRANCH == null
+      when: never
+    - !reference [analyze:checksum:update, rules]

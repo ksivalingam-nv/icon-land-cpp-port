@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+# ICON
+#
+# ------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ------------------------------------------
+
+#------------------------------------------------------------------------------
+# get_four_digits_year
+#------------------------------------------------------------------------------
+#  - returns the year passed formatted to four digits, padded with zeros if necessary
+#    (Forcing files in ICON-Land are currently expected to have 4 digits)
+#
+# input parameters:
+#   run_year          - simulated year
+#
+# $Id: get_four_digits_year $
+#------------------------------------------------------------------------------
+PROGRAM=$(basename $0)
+
+if [ -z "$1" ]
+then
+    exec >&2
+    echo "Oops: invalid number of parameters"
+    echo "Usage: $PROGRAM run_year"
+    exit 1
+fi
+
+year=$1
+# Check if input is a valid number
+if ! [[ "$year" =~ ^[0-9]+$ ]]; then
+    echo "Error: please use $PROGRAM with a non-negative integer as input."
+    exit 1
+fi
+
+# Check if > 9999
+if [ "$year" -gt 9999 ]; then
+    echo "Error: please use $PROGRAM with a year must be ≤ 9999."
+    exit 1
+fi
+
+# Format as 4-digit zero-padded number
+printf "%04d\n" "$year"

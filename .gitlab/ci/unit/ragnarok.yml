@@ -1,0 +1,162 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+include:
+  - local: .gitlab/ci/common/dkrz.yml
+  - local: .gitlab/ci/common/docker.yml
+
+.unit:ragnarok:common:
+  stage: unit
+  needs: []
+  variables:
+    CLICOLOR_FORCE: 1
+    VERBOSE: # any given value is ignored, it's just checked for existence
+    MAKEFLAGS: --no-print-directory --output-sync=target
+    CTEST_OUTPUT_ON_FAILURE: 1
+    GTEST_COLOR: 1
+  script:
+    - |
+      # !reference [.unit:ragnarok:common, script]
+      icon_ci_log_section_start 'Configuring Ragnarok' 'collapsed=false'
+      ICON_CI_RAGNAROK_SOURCE_PATH=${ICON_CI_RAGNAROK_SOURCE_PATH:-"${CI_PROJECT_DIR}/ragnarok"}
+      ICON_CI_RAGNAROK_BUILD_PATH=${ICON_CI_RAGNAROK_BUILD_PATH:-"${ICON_CI_RAGNAROK_SOURCE_PATH}/build"}
+      (
+        cmake --version
+        eval "set dummy ${ICON_CI_RAGNAROK_CMAKE_EXTRA_ARGS-}; shift"
+        set -ux
+        cmake \
+          -S "${ICON_CI_RAGNAROK_SOURCE_PATH}" \
+          -B "${ICON_CI_RAGNAROK_BUILD_PATH}" \
+          -G 'Unix Makefiles' \
+          "$@"
+      ) 2>&1
+      icon_ci_log_section_end
+      icon_ci_log_section_start 'Building Ragnarok' 'collapsed=false'
+      (
+        set -ux
+        cmake --build "${ICON_CI_RAGNAROK_BUILD_PATH}"
+      ) 2>&1
+      icon_ci_log_section_end
+      icon_ci_log_section_start 'Testing Ragnarok' 'collapsed=false'
+      (
+        set -ux
+        ctest --test-dir "${ICON_CI_RAGNAROK_BUILD_PATH}"
+      ) 2>&1
+      icon_ci_log_section_end
+
+.unit:ragnarok:docker:
+  extends:
+    - .common:docker:any-image
+    - .unit:ragnarok:common
+  image: registry.gitlab.dkrz.de/icon/containers/icon-ci-build:43a89f63
+  variables:
+    CMAKE_BUILD_PARALLEL_LEVEL: 8
+    CTEST_PARALLEL_LEVEL: 8
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - if: $CI
+
+.unit:ragnarok:levante:common:
+  extends: .unit:ragnarok:common
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
+    ICON_CI_COMMON_DKRZ_SLURM_NTASKS: 64
+    ICON_CI_UTILS_GIT_CLONE_PATH: ${ICON_CI_COMMON_DKRZ_LOCAL_TEMP_FAST_PATH}
+    ICON_CI_UTILS_GIT_SPARSE_PATTERNS: /ragnarok/
+    ICON_CI_RAGNAROK_SOURCE_PATH: ${ICON_CI_UTILS_GIT_CLONE_PATH}/ragnarok
+    ICON_CI_RAGNAROK_CMAKE_EXTRA_ARGS: >-
+      -C "${ICON_CI_RAGNAROK_SOURCE_PATH}/${ICON_CI_RAGNAROK_CACHE_FILE_REL_PATH}"
+    CMAKE_BUILD_PARALLEL_LEVEL: ${ICON_CI_COMMON_DKRZ_SLURM_NTASKS}
+    CTEST_PARALLEL_LEVEL: ${ICON_CI_COMMON_DKRZ_SLURM_NTASKS}
+
+.unit:ragnarok:levante:cpu:
+  extends:
+    - .common:dkrz:levante:cpu
+    - .unit:ragnarok:levante:common
+
+.unit:ragnarok:levante:gpu:
+  extends:
+    - .common:dkrz:levante:gpu
+    - .unit:ragnarok:levante:common
+
+ragnarok:cpu:serial:
+  extends: .unit:ragnarok:docker
+  variables:
+    ICON_CI_RAGNAROK_CMAKE_EXTRA_ARGS: >-
+      -DCMAKE_CXX_CLANG_TIDY='clang-tidy-20;--use-color'
+      -DKokkos_ENABLE_OPENMP=OFF
+      -DKokkos_ENABLE_SERIAL=ON
+      -DRGK_ENABLE_STANDALONE=ON
+
+ragnarok:icon-bridge:
+  extends: .unit:ragnarok:docker
+  variables:
+    ICON_CI_RAGNAROK_CMAKE_EXTRA_ARGS: >-
+      -DCMAKE_CXX_CLANG_TIDY='clang-tidy-20;--use-color'
+      -DBUILD_SHARED_LIBS=OFF
+      -DRGK_ENABLE_STANDALONE=OFF
+  script:
+    - !reference [.unit:ragnarok:docker, script]
+    - |
+      # !reference [ragnarok:icon-bridge, script]
+      icon_ci_log_status_msg 'Checking for expected build artifacts...'
+      (
+        set -ux
+        test -e "${ICON_CI_RAGNAROK_BUILD_PATH}/libragnarok.a"
+      )
+
+ragnarok:cpu:openmp:
+  extends: .unit:ragnarok:levante:cpu
+  variables:
+    OMP_PROC_BIND: close
+    OMP_PLACES: cores
+    OMP_NUM_THREADS: ${ICON_CI_COMMON_DKRZ_SLURM_NTASKS}
+    ICON_CI_RAGNAROK_CACHE_FILE_REL_PATH: cmake/caches/levante_cpu_intel.cmake
+
+ragnarok:gpu:
+  extends: .unit:ragnarok:levante:gpu
+  variables:
+    ICON_CI_RAGNAROK_CACHE_FILE_REL_PATH: cmake/caches/levante_gpu_nvhpc.cmake
+
+.unit:ragnarok:mi300a:common:
+  extends: .unit:ragnarok:common
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
+    ICON_CI_UTILS_GIT_SPARSE_PATTERNS: /ragnarok/
+    ICON_CI_RAGNAROK_CMAKE_EXTRA_ARGS: >-
+      -C "${CI_PROJECT_DIR}/ragnarok/${ICON_CI_RAGNAROK_CACHE_FILE_REL_PATH}"
+    CMAKE_BUILD_PARALLEL_LEVEL: 32
+    CTEST_PARALLEL_LEVEL: 32
+
+.unit:ragnarok:mi300a:
+  extends:
+    - .common:dkrz:mi300a
+    - .utils:git:clone
+    - .unit:ragnarok:mi300a:common
+  before_script:
+    - !reference [.common:dkrz:mi300a, before_script]
+    - !reference [.utils:git:clone, before_script]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - if: $CI
+
+ragnarok:gpu:mi300a:
+  extends: .unit:ragnarok:mi300a
+  variables:
+    ICON_CI_RAGNAROK_CACHE_FILE_REL_PATH: cmake/caches/mi300a_gpu_rocm.cmake
+
+ragnarok:cpu:mi300a:
+  extends: .unit:ragnarok:mi300a
+  variables:
+    ICON_CI_RAGNAROK_CACHE_FILE_REL_PATH: cmake/caches/mi300a_cpu_rocm.cmake
+    ICON_CI_COMMON_DKRZ_SLURM_TIMELIMIT: "10:00"

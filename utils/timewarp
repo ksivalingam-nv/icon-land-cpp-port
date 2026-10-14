@@ -1,0 +1,41 @@
+#! /usr/bin/env perl
+
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+#
+# Print and flush each input line, prepending millisecond timestamps
+#
+use strict;
+use warnings;
+use POSIX qw(strftime);
+use Time::HiRes qw(gettimeofday);
+
+binmode(STDIN, ":raw");
+binmode(STDOUT, ":raw");
+$| = 1;
+
+my $last_seconds = 0;
+my $base_time_str = "";
+
+while (<>) {
+    my ($seconds, $microseconds) = gettimeofday;
+
+    if ($seconds != $last_seconds) {
+        $base_time_str = strftime("%FT%T", localtime($seconds));
+        $last_seconds = $seconds;
+    }
+
+    print(
+        $base_time_str,
+        sprintf(".%03.0f: ", $microseconds / 1000),
+        $_
+    );
+}

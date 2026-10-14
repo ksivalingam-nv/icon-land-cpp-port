@@ -1,0 +1,289 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+include:
+  - local: .gitlab/ci/common/docker.yml
+
+# Implements a common template for jobs that validate ICON model output by
+# consistently calculating field-level checksums (currently supporting NetCDF,
+# agnostic to lossless compression). The job generates a YAML file with the
+# calculated value and compares it against a reference table, succeeding if the
+# values match and failing if they mismatch.
+#
+# Output variables (passed to dependent jobs via the dotenv report):
+#
+#   - ICON_CI_COMMON_ANALYZE_FAILED_JOB_NAME_env: name of this job for a
+#     dependent job to distinguish between checksum mismatches and unexpected
+#     failures (set only if the job fails for unknown reasons).
+#
+#   - ICON_CI_COMMON_ANALYZE_FAILED_JOB_URL_env: URL of this job for a dependent
+#     job to reference it in the failure report (set only if the job fails for
+#     unknown reasons).
+#
+#   - ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH_env: relative (to the root
+#     source directory) path to the YAML file containing reference checksum
+#     values for a dependent job to work on the file (set only if the job fails
+#     due to a checksum mismatch).
+#
+#   - ICON_CI_COMMON_ANALYZE_CHECKSUM_ENTRIES_REL_PATH_env: relative (to
+#     $CI_PROJECT_DIR) path to the output directory with the generated YAML file
+#     containing the calculated checksum value of the current model output (set
+#     only if the job fails due to a checksum mismatch)
+#
+.common:analyze:checksum:
+  extends:
+    - .common:docker:any-image
+    - .utils:reports:annotations
+    - .utils:reports:dotenv
+    - .utils:storage
+  stage: system
+  image: registry.gitlab.dkrz.de/icon/containers/icon-ci-analyze:11b5f0da
+  variables:
+    # Unique (within a pipeline) and reproducible (across pipelines) identifier
+    # of the job that produced the model output (defaults to the value of the
+    # respective output variable from .utils:icon:run):
+    ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_ID: ${ICON_CI_UTILS_ICON_OUTPUT_ID_env}
+
+    # URL of the job that produced the model output (defaults to the value of
+    # the respective output variable from .utils:icon:run)
+    ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_JOB_URL: >-
+      ${ICON_CI_UTILS_ICON_OUTPUT_JOB_URL_env}
+
+    # Absolute path to the directory containing the model output files (defaults
+    # to the value of the respective output variable from .utils:icon:run):
+    ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_PATH: >-
+      ${CI_PROJECT_DIR}/${ICON_CI_UTILS_ICON_OUTPUT_REL_PATH_env}
+
+    # Filename prefix of the model output files (defaults to the value of the
+    # respective output variable from .utils:icon:run):
+    ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_FILENAME_PREFIX: >-
+      ${ICON_CI_UTILS_ICON_OUTPUT_FILENAME_PREFIX_env}
+
+    # Relative (to the root source directory) path to the YAML file containing
+    # reference checksum values:
+    ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH: >-
+      .gitlab/ci/data/${CI_JOB_STAGE}-checksum-table.yml
+
+    # Relative (to $CI_PROJECT_DIR) path to the target directory with the
+    # generated YAML file containing the calculated checksum value of the
+    # current model output (uploaded as an artifact):
+    ICON_CI_COMMON_ANALYZE_CHECKSUM_ENTRIES_REL_PATH: ${CI_JOB_STAGE}-checksum-entries
+
+    # Internal variables:
+    ICON_CI_COMMON_ANALYZE_CHECKSUM_TMP_PATH: >-
+      ${CI_PROJECT_DIR}/.${CI_JOB_ID}.checksum.tmp
+    ICON_CI_UTILS_STORAGE_BUCKET: >-
+      ${ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_FILENAME_PREFIX}
+  before_script:
+    - |
+      # !reference [.common:analyze:checksum, before_script]
+      # Pre-emptively establish a failure baseline. We bypass
+      # icon_ci_reports_dotenv_export here in favor of a bulletproof, raw
+      # redirection to minimize potential failure points:
+      {
+        echo "ICON_CI_COMMON_ANALYZE_FAILED_JOB_NAME_env=${CI_JOB_NAME}"
+        echo "ICON_CI_COMMON_ANALYZE_FAILED_JOB_URL_env=${CI_JOB_URL}"
+      } >"${ICON_CI_UTILS_REPORTS_DOTENV_PATH}"
+    - !reference [.common:docker:any-image, before_script]
+    - !reference [.utils:reports:annotations, before_script]
+    - !reference [.utils:reports:dotenv, before_script]
+    - !reference [.utils:storage, before_script]
+  script:
+    - |
+      # !reference [.common:analyze:checksum, script]
+      icon_ci_log_section_start 'Verifying the checksum of the model output' 'collapsed=false'
+      (
+        set -u
+
+        # Sanity checks:
+        test -n "${ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH-}" || {
+          icon_ci_log_fatal_msg \
+            'ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH is not set'
+        }
+        cdo --version
+
+        model_output_files=$(
+          find "${ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_PATH}" -type f \
+            -name "${ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_FILENAME_PREFIX}*.nc"
+        )
+
+        cksum_pp_path="${ICON_CI_COMMON_ANALYZE_CHECKSUM_TMP_PATH}/pp"
+        ( set -x; rm -rf "${cksum_pp_path}"; mkdir -p "${cksum_pp_path}" )
+        for ofile in ${model_output_files}; do
+          splitgrid_obase="${cksum_pp_path}/$(basename "${ofile}")"
+          splitgrid_obase="${splitgrid_obase%.*}."
+          (set -x; cdo splitgrid "${ofile}" "${splitgrid_obase}" )
+        done
+        cksum_files=$(echo "${cksum_pp_path}"/* | LC_ALL=C sort)
+
+        current_cksum=$(
+          set -x
+          cdo outputf,'%.17g' ${cksum_files} | \
+            sha256sum --text - | \
+            cut -d ' ' -f1
+        )
+        icon_ci_log_note_msg "Current checksum: ${current_cksum}"
+        icon_ci_reports_annotate_url_py \
+          "Current output ($(echo "${current_cksum}" | cut -c1-8))" \
+          "${ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_JOB_URL}/artifacts/download"
+
+        reference_cksum=$(
+          set -x
+          python3 -c '
+      import sys, yaml
+      table_path, output_id = sys.argv[1:3]
+      entry_value=yaml.safe_load(open(table_path, "r"))[output_id]
+      print(entry_value)
+      '     "${CI_PROJECT_DIR}/${ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH}" \
+            "${ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_ID}"
+        ) || reference_cksum=unknown
+        icon_ci_log_note_msg "Reference checksum: ${reference_cksum}"
+        test 'unknown' = "${reference_cksum}" || {
+          icon_ci_storage_set_data_url reference_url "${reference_cksum}"
+          icon_ci_reports_annotate_url_py \
+            "Reference output ($(echo "${reference_cksum}" | cut -c1-8))" \
+            "${reference_url}"
+        }
+
+        (
+          set -x
+          rm -rf "${CI_PROJECT_DIR}/${ICON_CI_COMMON_ANALYZE_CHECKSUM_ENTRIES_REL_PATH}"
+          python3 -c '
+      import os, sys, yaml
+      entry_path, output_id, checksum = sys.argv[1:4]
+      os.makedirs(os.path.dirname(entry_path), exist_ok=True)
+      yaml.safe_dump(
+        { output_id: checksum },
+        open(entry_path, "w"))
+      '     "${CI_PROJECT_DIR}/${ICON_CI_COMMON_ANALYZE_CHECKSUM_ENTRIES_REL_PATH}/${CI_JOB_NAME_SLUG}.yml" \
+            "${ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_ID}" \
+            "${current_cksum}"
+        )
+
+        test "${current_cksum}" = "${reference_cksum}" && {
+          icon_ci_storage_upload "${current_cksum}" ${model_output_files} || {
+            icon_ci_log_warn_msg 'Failed to upload the reference output'
+          }
+        } || {
+          ref_data_path="${ICON_CI_COMMON_ANALYZE_CHECKSUM_TMP_PATH}/ref"
+          icon_ci_storage_download "${reference_cksum}" "${ref_data_path}" && (
+            icon_ci_log_status_msg 'Comparing the current model output with the reference...'
+            set -x
+            find "${ref_data_path}" -mindepth 2 -type f \
+              -name "${ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_FILENAME_PREFIX}*.nc" \
+              -exec mv -v '{}' "${ref_data_path}/" ';'
+          ) && {
+            for ofile in ${model_output_files}; do
+              (
+                set -x
+                cdo --color all diffn,maxcount=100 "${ref_data_path}/${ofile##*/}" "${ofile}"
+              ) || true
+            done
+          } || {
+            icon_ci_log_warn_msg \
+              'Failed to download the reference data and compare it with the current model output'
+          }
+        }
+
+        # We assume that the only reason for the job to fail after this line is
+        # the checksum mismatch, which is an "expected" failure handled by the
+        # dependent jobs:
+        icon_ci_reports_dotenv_unset \
+          ICON_CI_COMMON_ANALYZE_FAILED_JOB_NAME_env \
+          ICON_CI_COMMON_ANALYZE_FAILED_JOB_URL_env
+
+        icon_ci_reports_dotenv_export \
+          "ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH_env=${ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH}" \
+          "ICON_CI_COMMON_ANALYZE_CHECKSUM_ENTRIES_REL_PATH_env=${ICON_CI_COMMON_ANALYZE_CHECKSUM_ENTRIES_REL_PATH}"
+
+        test "${current_cksum}" = "${reference_cksum}" && {
+          icon_ci_log_status_msg "The current model output checksum for \
+      '${ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_ID}' matches the reference value"
+        } || {
+          icon_ci_log_fatal_msg "The reference model output checksum for \
+      '${ICON_CI_COMMON_ANALYZE_ICON_OUTPUT_ID}' is '${reference_cksum}', got \
+      '${current_cksum}'"
+        }
+      ) 2>&1
+      icon_ci_log_section_end
+  artifacts:
+    paths:
+      - ${ICON_CI_COMMON_ANALYZE_CHECKSUM_ENTRIES_REL_PATH}
+    when: on_failure
+    expire_in: 1 day
+
+# Implements a common template for jobs that update the reference checksum table
+# following a verification mismatch in a dependency job. If a dependency failed
+# due to an unknown reason (indicated by a non-empty
+# ICON_CI_COMMON_ANALYZE_FAILED_JOB_NAME_env environment variable), this job
+# aborts immediately to avoid corrupting the table. Otherwise, it collects the
+# newly calculated checksum entries from upstream jobs, merges them into the
+# existing reference table, and exposes the updated table as an artifact.
+#
+# Output variables (passed to dependent jobs via the dotenv report):
+#
+#   - ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH_env: relative (to
+#     $CI_PROJECT_DIR) path to the updated YAML file containing reference
+#     checksum values for a dependent job to work on the same file.
+#
+.common:analyze:checksum:update:
+  extends:
+    - .common:docker:any-image
+    - .utils:reports:dotenv
+  stage: system
+  image: !reference [.common:analyze:checksum, image]
+  variables:
+    # Relative (to $CI_PROJECT_DIR) path to the YAML file containing reference
+    # checksum values (defaults to the value of the respective output variable
+    # from .common:analyze:checksum, uploaded as an artifact):
+    ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH: >-
+      ${ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH_env}
+
+    # Relative (to $CI_PROJECT_DIR) path to the directory with the YAML file
+    # containing new checksum values (defaults to the value of the respective
+    # output variable from .common:analyze:checksum):
+    ICON_CI_COMMON_ANALYZE_CHECKSUM_ENTRIES_REL_PATH: >-
+      ${ICON_CI_COMMON_ANALYZE_CHECKSUM_ENTRIES_REL_PATH_env}
+  before_script:
+    - !reference [.common:docker:any-image, before_script]
+    - |
+      # !reference [.common:analyze:checksum:update, before_script]
+      test -z "${ICON_CI_COMMON_ANALYZE_FAILED_JOB_NAME_env-}" || {
+        icon_ci_log_fatal_msg \
+          "Job '${ICON_CI_COMMON_ANALYZE_FAILED_JOB_NAME_env}' failed \
+      for unknown reasons (see ${ICON_CI_COMMON_ANALYZE_FAILED_JOB_URL_env})"
+      }
+    - !reference [.utils:reports:dotenv, before_script]
+  script:
+    - |
+      # !reference [.common:analyze:checksum:update, script]
+      icon_ci_log_section_start 'Updating the model output checksum table' 'collapsed=false'
+      (
+        set -ux
+        python3 -c '
+      import os, sys, yaml
+      table_path, *entry_paths = sys.argv[1:]
+      table = yaml.safe_load(open(table_path, "r")) if os.path.isfile(table_path) else {}
+      [table.update(yaml.safe_load(open(entry_path, "r"))) for entry_path in entry_paths]
+      os.makedirs(os.path.dirname(table_path), exist_ok=True)
+      yaml.safe_dump(table, open(table_path, "w"), sort_keys=True, default_flow_style=False)
+      '   "${CI_PROJECT_DIR}/${ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH}" \
+          "${CI_PROJECT_DIR}/${ICON_CI_COMMON_ANALYZE_CHECKSUM_ENTRIES_REL_PATH}"/*
+        cat "${CI_PROJECT_DIR}/${ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH}"
+      ) 2>&1
+      icon_ci_reports_dotenv_export \
+        "ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH_env=${ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH}"
+      icon_ci_log_section_end
+  when: on_failure
+  artifacts:
+    paths:
+      - ${ICON_CI_COMMON_ANALYZE_CHECKSUM_TABLE_REL_PATH}
+    expire_in: 1 day

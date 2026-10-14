@@ -1,0 +1,121 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+# Implements a before_script that defines shell functions for interacting with a
+# remote dataset storage. The underlying infrastructure utilizes the GitLab
+# Package Registry endpoint to store and retrieve arbitrary data as compressed
+# ZIP archives.
+#
+# The script defines the following shell functions:
+#   1. icon_ci_storage_set_data_url(): dynamically constructs the URL for a
+#      given dataset key and stores it in a target shell variable.
+#      Accepts the following positional arguments:
+#        - $1: the name of the shell variable to be populated with the URL;
+#        - $2: the unique storage key (dataset identifier).
+#   2. icon_ci_storage_upload(): packs and uploads specified files or
+#      directories to the remote registry. The function checks for existence
+#      first and skips the upload if the key is already occupied.
+#      Accepts the following positional arguments:
+#        - $1: the unique storage key (dataset identifier);
+#        - $@ (remaining arguments): a list of absolute or relative (to
+#          $CI_PROJECT_DIR) file or directory paths within the project directory
+#          to include in the upload.
+#   3. icon_ci_storage_download(): retrieves a compressed archive from the
+#      remote registry by its key and extracts its contents into the target
+#      destination directory.
+#      Accepts the following positional arguments:
+#        - $1: the unique storage key (dataset identifier);
+#        - $2 (defaults to $CI_PROJECT_DIR): the absolute or relative (to the
+#          current working directory) path where the archive contents should be
+#          unpacked.
+#
+# Jobs that extend the template must ensure that their runtime environments
+# provide the curl, zip and unzip commands.
+#
+.utils:storage:
+  variables:
+    # ID of the GitLab project providing the storage (defaults to the ID of
+    # icon/ci-tooling/storage):
+    ICON_CI_UTILS_STORAGE_PROJECT_ID: 142208
+
+    # Name of the bucket used to store the data:
+    ICON_CI_UTILS_STORAGE_BUCKET: ${CI_PROJECT_PATH_SLUG}
+  before_script:
+    - |
+      # !reference [.utils:storage, before_script]
+      icon_ci_storage_set_data_url()
+      {
+        eval "${1}='${CI_API_V4_URL}/projects/${ICON_CI_UTILS_STORAGE_PROJECT_ID}/packages/generic/${ICON_CI_UTILS_STORAGE_BUCKET}/${2}/data.zip'"
+      }
+
+      icon_ci_storage_upload()
+      (
+        icon_ci_log_section_start "Uploading dataset with key '${1}'"
+        trap icon_ci_log_section_end EXIT
+
+        set -u
+        icon_ci_storage_set_data_url data_url "${1}"
+        (
+          set -x
+          curl -fsSL -H "JOB-TOKEN: ${CI_JOB_TOKEN}" -H "Range: bytes=0-0" "${data_url}" >/dev/null
+        ) 2>&1 && {
+          icon_ci_log_status_msg 'The dataset is already in the storage'
+        } || {
+          shift
+          paths='
+      '
+          for path in "$@"; do
+            case ${path} in
+              /*) abs_path="${path}" ;;
+              *) abs_path="${CI_PROJECT_DIR}/${path}" ;;
+            esac
+            test -e "${abs_path}" || {
+              icon_ci_log_warn_msg "'${abs_path}' does not exist"
+              continue
+            }
+            case ${abs_path} in
+              "${CI_PROJECT_DIR}") paths="${paths}.
+      " ;;
+              "${CI_PROJECT_DIR}/"*) paths="${paths}${path#"${CI_PROJECT_DIR}/"}
+      " ;;
+              *) icon_ci_log_warn_msg "'${abs_path}' is not a subpath of the project directory" ;;
+            esac
+          done
+          test -n "${paths}" || {
+            icon_ci_log_fatal_msg 'No files to upload'
+          }
+          (
+            set -x
+            echo "${paths}" | \
+              zip -r -@ - | \
+              curl -fsSL -H "JOB-TOKEN: ${CI_JOB_TOKEN}" -T - \
+                "${data_url}" >/dev/null
+          ) 2>&1 || exit 1
+        }
+      )
+
+      icon_ci_storage_download()
+      (
+        icon_ci_log_section_start "Downloading dataset with key '${1}'"
+        trap icon_ci_log_section_end EXIT
+
+        set -u
+        icon_ci_storage_set_data_url data_url "${1}"
+        dest_path=${2:-${CI_PROJECT_DIR}}
+        tmp_path="${CI_PROJECT_DIR}/.${CI_JOB_ID}-${CI_JOB_NAME_SLUG}-data.zip"
+        (
+          trap "rm -rf '${tmp_path}'" EXIT
+          set -x
+          curl -fsSLo "${tmp_path}" -H "JOB-TOKEN: ${CI_JOB_TOKEN}" "${data_url}" && \
+            mkdir -p "${dest_path}" && \
+            unzip -od "${dest_path}" "${tmp_path}"
+        ) 2>&1 || exit 1
+      )

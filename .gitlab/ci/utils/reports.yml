@@ -1,0 +1,156 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+# Implements a before_script that defines shell functions for generating GitLab
+# CI annotation reports.
+#
+# The script defines the following shell functions:
+#   1. icon_ci_reports_annotate_url_py(): appends an external link to the
+#      annotation report using python3. Links are rendered in the order they are
+#      added. If a link with a previously existing label is added again, its URL
+#      is updated and it is moved to the end of the list, changing its rendering
+#      priority.
+#      Accepts the following positional arguments:
+#        - $1: the plain-text label for the external link;
+#        - $2: the URL for the external link.
+
+#   2. icon_ci_reports_annotate_url_jq(): functionally identical to
+#      icon_ci_reports_annotate_url_py(), but implemented using jq.
+#
+# Jobs invoking these functions must ensure that their runtime environments
+# provide the corresponding executable (python3 or jq).
+#
+.utils:reports:annotations:
+  variables:
+    # Absolute path to the generated JSON file containing the annotation
+    # report (uploaded as a job artifact):
+    ICON_CI_UTILS_REPORTS_ANNOTATIONS_PATH: ${CI_PROJECT_DIR}/annotations.json
+
+    # Base URL prefix for direct access to HTML artifacts, bypassing GitLab's
+    # external link redirection warning (due to limitations in predefined GitLab
+    # CI variables, this specific URL construction does not resolve correctly
+    # if the project is nested within subgroups):
+    ICON_CI_UTILS_REPORTS_ARTIFACTS_HTML_URL: >-
+      https://${CI_PAGES_HOSTNAME}/-/${CI_PROJECT_NAME}/-/jobs/${CI_JOB_ID}/artifacts
+
+    # Base URL prefix for direct, raw download links to individual files within
+    # the job artifacts:
+    ICON_CI_UTILS_REPORTS_ARTIFACTS_RAW_URL: ${CI_JOB_URL}/artifacts/raw
+  before_script:
+    - |
+      # !reference [.utils:reports:annotations, before_script]
+      icon_ci_reports_annotate_url_py ()
+      {
+        icon_ci_log_note_msg "${1}: ${2}"
+        python3 -c '
+      import json, os, sys
+      path, label, url = sys.argv[1:4]
+      data = json.load(open(path)) if os.path.exists(path) else {}
+      data["section"] = [
+        item for item in data.get("section", [])
+        if item.get("external_link", {}).get("label") != label
+      ] + [{"external_link": {"label": label, "url": url}}]
+      json.dump(data, open(path, "w"))
+      ' "${ICON_CI_UTILS_REPORTS_ANNOTATIONS_PATH}" "${1}" "${2}"
+      }
+      icon_ci_reports_annotate_url_jq ()
+      {
+        icon_ci_log_note_msg "${1}: ${2}"
+        {
+          test -s "${ICON_CI_UTILS_REPORTS_ANNOTATIONS_PATH}" && \
+            cat "${ICON_CI_UTILS_REPORTS_ANNOTATIONS_PATH}" || \
+            echo '{}'
+        } | {
+          jq '
+      $ARGS.positional as [$label, $url] |
+      .section = (
+        (.section // [])
+        | map(select(.external_link.label != $label))
+        + [{"external_link": {"label": $label, "url": $url}}]
+      )
+      ' --args "${1}" "${2}" > "${ICON_CI_UTILS_REPORTS_ANNOTATIONS_PATH}~" && \
+            mv \
+              "${ICON_CI_UTILS_REPORTS_ANNOTATIONS_PATH}~" \
+              "${ICON_CI_UTILS_REPORTS_ANNOTATIONS_PATH}"
+        }
+      }
+      test -e "${ICON_CI_UTILS_REPORTS_ANNOTATIONS_PATH}" || {
+        echo '{}' > "${ICON_CI_UTILS_REPORTS_ANNOTATIONS_PATH}"
+      }
+  artifacts:
+    reports:
+      annotations: ${ICON_CI_UTILS_REPORTS_ANNOTATIONS_PATH}
+
+# Implements a before_script that defines shell functions for generating GitLab
+# CI dotenv reports.
+#
+# The script defines the following shell functions:
+#   1. icon_ci_reports_dotenv_export(): appends environment variable definitions
+#      to the dotenv report file.
+#      Accepts the following positional arguments:
+#        - $@ (all arguments): a list of environment variable names to evaluate
+#          and export, or explicit NAME=VALUE assignment pairs.
+#   2. icon_ci_reports_dotenv_unset(): removes environment variable definitions
+#      from the dotenv report file.
+#      Accepts the following positional arguments:
+#        - $@ (all arguments): a list of environment variable names to purge
+#          from the report file.
+#
+.utils:reports:dotenv:
+  variables:
+    # Absolute path to the generated dotenv file (uploaded as an artifact):
+    ICON_CI_UTILS_REPORTS_DOTENV_PATH: ${CI_PROJECT_DIR}/.env
+  before_script:
+    - |
+      # !reference [.utils:reports:dotenv, before_script]
+      icon_ci_reports_dotenv_export ()
+      {
+        icon_ci_log_status_msg \
+          'Exporting variables for the dependent jobs...'
+        (
+          for icon_ci_var in "${@}"; do
+            case ${icon_ci_var} in
+              *=*)
+                icon_ci_var_name=${icon_ci_var%%=*}
+                icon_ci_var_value=${icon_ci_var#*=}
+                ;;
+              '' | [0-9]* | *[!a-zA-Z0-9_]* )
+                continue
+                ;;
+              *)
+                icon_ci_var_name=${icon_ci_var}
+                eval "icon_ci_var_value=\$${icon_ci_var}"
+                ;;
+            esac
+            echo "${icon_ci_var_name}=${icon_ci_var_value}"
+          done
+        ) | tee -a "${ICON_CI_UTILS_REPORTS_DOTENV_PATH}"
+      }
+      icon_ci_reports_dotenv_unset ()
+      {
+        icon_ci_log_status_msg \
+          'Unsetting variables for the dependent jobs...'
+        test ! -s "${ICON_CI_UTILS_REPORTS_DOTENV_PATH}" || {
+          touch "${ICON_CI_UTILS_REPORTS_DOTENV_PATH}~"
+          awk -F= '
+      BEGIN { for (i = 3; i < ARGC; i++) { t[ARGV[i]]; ARGV[i] = "" } }
+      $1 in t { print $1; next }
+      { print > ARGV[1] }
+      ' "${ICON_CI_UTILS_REPORTS_DOTENV_PATH}~" "${ICON_CI_UTILS_REPORTS_DOTENV_PATH}" "$@" && \
+            mv \
+              "${ICON_CI_UTILS_REPORTS_DOTENV_PATH}~" \
+              "${ICON_CI_UTILS_REPORTS_DOTENV_PATH}"
+        }
+      }
+      touch "${ICON_CI_UTILS_REPORTS_DOTENV_PATH}"
+  artifacts:
+    reports:
+      dotenv: ${ICON_CI_UTILS_REPORTS_DOTENV_PATH}

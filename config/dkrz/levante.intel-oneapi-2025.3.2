@@ -1,0 +1,144 @@
+#!/bin/bash
+
+# ICON
+#
+# ------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ------------------------------------------
+
+set -eu
+unset CDPATH
+ulimit -c 0
+
+script_dir=$(cd "$(dirname "$0")"; pwd)
+icon_dir=$(cd "${script_dir}/../.."; pwd)
+
+################################################################################
+
+gcc_root='/sw/spack-levante/gcc-13.4.0-c4mgfk'
+oneapi_root='/sw/spack-levante/intel-oneapi-compilers-2025.3.2-hrqlez/compiler/2025.3'
+stdcpp_libs='-lstdc++'
+
+mpi_root='/sw/spack-levante/openmpi-5.0.10-pjjvwl'
+
+zlib_libs='-lz'
+
+hdf5_root='/sw/spack-levante/hdf5-1.14.6-cz2y6n'
+hdf5_libs='-lhdf5_hl_fortran -lhdf5_fortran -lhdf5'
+
+netcdf_root='/sw/spack-levante/netcdf-c-4.10.0-wplcog'
+netcdf_libs='-lnetcdf'
+
+netcdff_root='/sw/spack-levante/netcdf-fortran-4.6.2-yuo6bc'
+netcdff_libs='-lnetcdff'
+
+netlib_lapack_root='/sw/spack-levante/netlib-lapack-3.9.1-rwhcz7'
+blas_lapack_libs='-llapack -lblas'
+
+eccodes_root='/sw/spack-levante/eccodes-2.46.0-77f24p'
+eccodes_libs='-leccodes_f90 -leccodes'
+
+fyaml_root='/sw/spack-levante/libfyaml-0.9-5z2ds3'
+fyaml_libs='-lfyaml'
+
+xml2_root='/usr'
+xml2_libs='-lxml2'
+
+################################################################################
+
+BUILD_ENV="export LD_LIBRARY_PATH=\"${oneapi_root}/lib:${gcc_root}/lib64:${hdf5_root}/lib:${netcdf_root}/lib:${netcdff_root}/lib:${netlib_lapack_root}/lib64:${eccodes_root}/lib64:${fyaml_root}/lib:\${LD_LIBRARY_PATH}\"; export PATH=\"${oneapi_root}/bin:${hdf5_root}/bin:\${PATH}\"; export MPI_ROOT=\"${mpi_root}\";"
+
+arch_c_cxx='-m64 -march=native -mtune=native'
+arch_fortran='-m64 -march=core-avx2 -mtune=core-avx2'
+
+CC="${mpi_root}/bin/mpicc"
+CFLAGS="${arch_c_cxx} -g -gdwarf-4 -fma -qno-opt-dynamic-align"
+ICON_CFLAGS='-O3'
+ICON_BUNDLED_CFLAGS='-O2'
+ICON_BUNDLED_FCFLAGS='-O3'
+# CDI needs precise evaluation of fp divisions in date calculations
+ICON_CDI_CFLAGS="${ICON_BUNDLED_CFLAGS} -fp-model=precise"
+# YAC needs precise floating point arithmetics to get a consistent decomposition
+ICON_YAC_CFLAGS="${ICON_BUNDLED_CFLAGS} -fp-model=precise"
+
+CXX=$("${mpi_root}/bin/mpicxx" -show | sed 's: .*$::')
+CXXFLAGS="${arch_c_cxx} -g -gdwarf-4 -pc64 -fma -O3 -fp-model=fast=1"
+
+CPPFLAGS="-I${hdf5_root}/include -I${netcdf_root}/include -I${eccodes_root}/include -I${fyaml_root}/include -I${xml2_root}/include/libxml2"
+
+FC="${mpi_root}/bin/mpif90"
+FCFLAGS="-I${hdf5_root}/include -I${netcdff_root}/include -I${eccodes_root}/include ${arch_fortran} -g -gdwarf-4 -fp-model source -traceback"
+ICON_FCFLAGS='-O3 -assume realloc_lhs -fma -align array64byte'
+
+ICON_OCEAN_FCFLAGS='-O3 -assume norealloc_lhs -reentrancy threaded -qopt-report-file=stdout -qopt-report=0 -qopt-report-phase=vec,loop'
+ICON_OCEAN_PATH='src/hamocc:src/ocean:src/sea_ice'
+
+ICON_ECRAD_FCFLAGS="${ICON_BUNDLED_FCFLAGS} -qno-opt-dynamic-align -no-fma -fpe0"
+
+LDFLAGS="-L${oneapi_root}/lib -L${gcc_root}/lib64 -L${hdf5_root}/lib -L${netcdf_root}/lib -L${netcdff_root}/lib -L${netlib_lapack_root}/lib64 -L${eccodes_root}/lib64 -L${fyaml_root}/lib -Wl,--disable-new-dtags -Wl,--as-needed"
+LIBS="${xml2_libs} ${fyaml_libs} ${eccodes_libs} ${blas_lapack_libs} ${netcdff_libs} ${netcdf_libs} ${hdf5_libs} ${zlib_libs} ${stdcpp_libs}"
+
+MPI_LAUNCH="${mpi_root}/bin/mpiexec"
+
+AR="/sw/spack-levante/intel-oneapi-compilers-2025.3.2-hrqlez/compiler/2025.3/bin/compiler/llvm-ar"
+NM="/sw/spack-levante/intel-oneapi-compilers-2025.3.2-hrqlez/compiler/2025.3/bin/compiler/llvm-nm"
+RANLIB="/sw/spack-levante/intel-oneapi-compilers-2025.3.2-hrqlez/compiler/2025.3/bin/compiler/llvm-ranlib"
+
+EXTRA_CONFIG_ARGS="\
+--enable-bundled-python=mtime \
+--disable-intel-consistency \
+--enable-loop-exchange \
+--disable-mpi-checks \
+"
+
+PYTHON='/work/mh1570/m215048/buildbot/venv-3.10.10-u7z3pz/bin/python3'
+################################################################################
+
+"${icon_dir}/configure" \
+BUILD_ENV="${BUILD_ENV}" \
+AR="${AR}" \
+NM="${NM}" \
+RANLIB="${RANLIB}" \
+CC="${CC}" \
+CFLAGS="${CFLAGS}" \
+CPPFLAGS="${CPPFLAGS}" \
+CXX="${CXX}" \
+CXXFLAGS="${CXXFLAGS}" \
+FC="${FC}" \
+FCFLAGS="${FCFLAGS}" \
+ICON_BUNDLED_CFLAGS="${ICON_BUNDLED_CFLAGS}" \
+ICON_YAXT_CFLAGS="${ICON_BUNDLED_CFLAGS}" \
+ICON_YAXT_FCFLAGS="${ICON_BUNDLED_FCFLAGS}" \
+ICON_CDI_CFLAGS="${ICON_CDI_CFLAGS}" \
+ICON_YAC_CFLAGS="${ICON_YAC_CFLAGS}" \
+ICON_CFLAGS="${ICON_CFLAGS}" \
+ICON_ECRAD_FCFLAGS="${ICON_ECRAD_FCFLAGS}" \
+ICON_FCFLAGS="${ICON_FCFLAGS}" \
+ICON_OCEAN_FCFLAGS="${ICON_OCEAN_FCFLAGS}" \
+ICON_OCEAN_PATH="${ICON_OCEAN_PATH}" \
+LDFLAGS="${LDFLAGS}" \
+LIBS="${LIBS}" \
+MPI_LAUNCH="${MPI_LAUNCH}" \
+${EXTRA_CONFIG_ARGS} \
+PYTHON="${PYTHON}" \
+"$@"
+
+# Support variants of --help even from this configure wrapper:
+for arg in "$@"; do
+  case $arg in
+    -help | --help | --hel | --he | -h | -help=r* | --help=r* | --hel=r* | --he=r* | -hr* | -help=s* | --help=s* | --hel=s* | --he=s* | -hs*)
+      test -n "${EXTRA_CONFIG_ARGS}" && echo '' && echo "This wrapper script ('$0') calls the configure script with the following extra arguments, which might override the default values listed above: ${EXTRA_CONFIG_ARGS}"
+      exit 0 ;;
+  esac
+done
+
+# Copy runscript-related files when building out-of-source:
+if test '0' = "${ICON_NO_OOS_RUNSCRIPT_COPY-0}" && test $(pwd) != $(cd "${icon_dir}"; pwd); then
+  echo "Copying runscript input files from the source directory..."
+  rsync -uavz ${icon_dir}/run . --exclude='*.in' --exclude='.*' --exclude=mkexp
+  ln -sf -t run/ ${icon_dir}/run/mkexp
+fi

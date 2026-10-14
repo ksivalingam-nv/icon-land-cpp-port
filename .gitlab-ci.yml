@@ -1,0 +1,68 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+spec:
+  inputs:
+    web-add-unit-stage:
+      type: boolean
+      default: false
+      description: add the unit stage to the web pipeline
+    web-add-system-stage:
+      type: boolean
+      default: false
+      description: add the system stage to the web pipeline
+
+---
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "web"
+      auto_cancel:
+        on_new_commit: none
+
+stages:
+  - warnings
+  - unit
+  - system
+
+default:
+  interruptible: true
+
+variables:
+  ICON_CI_VERBOSE:
+    value: 'false'
+    options: ['true', 'false']
+    expand: false
+    description: enable verbose logs
+
+include:
+  - local: .gitlab/ci/utils/*.yml
+  - local: .gitlab/ci/unit/ragnarok.yml
+    rules:
+      - if: $CI_PROJECT_PATH == "icon/icon-model"
+        when: never
+      - if: $CI_PIPELINE_SOURCE == "web" && "$[[ inputs.web-add-unit-stage ]]" == "true"
+      - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+        changes:
+          - .gitlab/ci/unit/ragnarok.yml
+          - ragnarok/**/*
+  - local: .gitlab/ci/system.yml
+    rules:
+      - if: $CI_PROJECT_PATH == "icon/icon-model"
+        when: never
+      - if: $CI_PIPELINE_SOURCE == "web" && "$[[ inputs.web-add-system-stage ]]" == "true"
+      - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  - local: .gitlab/ci/system/land.yml
+    rules:
+      - if: $CI_PROJECT_PATH == "icon/icon-model"
+        when: never
+      - if: $CI_PIPELINE_SOURCE == "web" && "$[[ inputs.web-add-system-stage ]]" == "true"
+      - if: $CI_PIPELINE_SOURCE == "merge_request_event"

@@ -1,0 +1,101 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+# Implements the recommended default template for a job that runs in a
+# Docker-based environment.
+#
+.common:docker:any-image:
+  extends: .utils:log
+  image: alpine:latest
+  variables:
+    # Internal variables:
+    GIT_SUBMODULE_UPDATE_FLAGS: --jobs=4
+  tags:
+    - docker-any-image
+
+# Implements the recommended default template for a job that runs in an
+# Alpine-based Docker environment. It installs required Alpine Package
+# Keeper (APK) packages utilizing GitLab CI caching.
+#
+.common:docker:alpine:
+  extends:
+    - .common:docker:any-image
+    - .utils:git:ignore
+  image: alpine:latest
+  variables:
+    # Space-separated list of packages to install with APK:
+    ICON_CI_COMMON_DOCKER_ALPINE_PACKAGES: null
+
+    # Path inside $CI_PROJECT_DIR to the APK cache directory:
+    #   Hint: to disable caching, nullify this variable and the cache parameter, i.e.
+    #     variables:
+    #       ICON_CI_COMMON_DOCKER_ALPINE_CACHE_PATH: null
+    #     cache: null
+    ICON_CI_COMMON_DOCKER_ALPINE_CACHE_PATH: ${ICON_CI_UTILS_GIT_IGNORE_PATH}/apk
+  before_script:
+    - !reference [.common:docker:any-image, before_script]
+    - |
+      # !reference [.common:docker:alpine, before_script]
+      icon_ci_log_section_start 'Installing APK packages'
+      (
+        set -u
+
+        test -z "${ICON_CI_COMMON_DOCKER_ALPINE_PACKAGES-}" && {
+          icon_ci_log_status_msg \
+            'ICON_CI_COMMON_DOCKER_ALPINE_PACKAGES is empty: nothing to install'
+          # Drop the cache if the list of required packages is empty:
+          test -z "${ICON_CI_COMMON_DOCKER_ALPINE_CACHE_PATH-}" || (
+            set -x
+            rm -rf "${ICON_CI_COMMON_DOCKER_ALPINE_CACHE_PATH}"
+          )
+        } || {
+
+          apk --version
+
+          test -z "${ICON_CI_COMMON_DOCKER_ALPINE_CACHE_PATH-}" && {
+            icon_ci_log_status_msg \
+              'ICON_CI_COMMON_DOCKER_ALPINE_CACHE_PATH is empty: the caching is disabled'
+          } || {
+            cache_path="${ICON_CI_COMMON_DOCKER_ALPINE_CACHE_PATH}/apk-cache"
+
+            # Enable the cache:
+            ( set -x; ln -s "${cache_path}" /etc/apk/cache; )
+
+            # Invalidate the cache if the list of required packages has changed:
+            cache_key=${ICON_CI_COMMON_DOCKER_ALPINE_PACKAGES}
+            cache_key_path="${ICON_CI_COMMON_DOCKER_ALPINE_CACHE_PATH}/apk-cache-key"
+
+            echo "${cache_key}" | diff - "${cache_key_path}" >/dev/null 2>&1 && (
+              icon_ci_log_status_msg "Using cache from '${cache_path}'..."
+              set -x
+              # Clean up the cache to prevent the accumulation of outdated
+              # packages:
+              apk cache clean
+            ) || (
+              icon_ci_log_status_msg "Initializing cache in '${cache_path}'..."
+              set -x
+              # Fully reset the cache:
+              rm -rf "${cache_path}"
+              mkdir -p "${cache_path}"
+              echo "${cache_key}" > "${cache_key_path}"
+            )
+          }
+
+          set -x
+          # Install the required packages:
+          apk add ${ICON_CI_COMMON_DOCKER_ALPINE_PACKAGES}
+        }
+      ) 2>&1
+      icon_ci_log_section_end
+  cache:
+    - key: apk-${CI_RUNNER_TAGS}-${CI_JOB_IMAGE}-${CI_JOB_NAME_SLUG}
+      paths:
+        - ${ICON_CI_COMMON_DOCKER_ALPINE_CACHE_PATH}

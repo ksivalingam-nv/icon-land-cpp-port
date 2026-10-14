@@ -1,0 +1,210 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+# Implements a before_script that defines shell functions for structured and
+# colorized output. It is safe to reference the before_script (i.e.
+# !reference [.utils:log, before_script]) more than once.
+#
+# The script defines the following shell functions:
+#   1. icon_ci_log_section_start(): emits a marker that starts a collapsible
+#      section (see https://docs.gitlab.com/ci/jobs/job_logs/#custom-collapsible-sections).
+#      Accepts the following positional arguments:
+#        - $1 (defaults to `unknown`): a string to be used as the header of the
+#          section;
+#        - $2 (defaults to `collapsed=true`): a string that specifies whether
+#          the section must be automatically collapsed, possible values:
+#            - `collapsed=true`: collapse the section;
+#            - `collapsed=false`: keep the section uncollapsed.
+#   2. icon_ci_log_section_end(): emits a marker that ends the current
+#      collapsible section (must be called in the same subshell as the
+#      respective icon_ci_log_section_start()).
+#   3. icon_ci_log_shopts_push(): pushes the current state of shell options onto
+#      an internal stack and constructs shell restoration code in the
+#      icon_ci_log_shopts_pop variable. To restore the previous shell option
+#      state and pop the stack, callers must evaluate the variable:
+#        eval "${icon_ci_log_shopts_pop}"
+#   4. icon_ci_log_status_msg(): reports high-level progress and status updates
+#      to indicate what the job is currently doing. This is primarily
+#      intended for CI/CD developers to facilitate log analysis, and the
+#      provided string should ideally be a concise, single-line message.
+#   5. icon_ci_log_note_msg(): provides auxiliary context, hints, URLs, or
+#      instructions to assist project developers who may be unfamiliar with
+#      the test internals, aiming to resolve or prevent potential confusion.
+#   6. icon_ci_log_warn_msg(): emits a non-critical warning indicating that
+#      an operation went slightly off but is not fatal to the job. Automatically
+#      prepends the message with "WARNING: ".
+#   7. icon_ci_log_error_msg(): emits a critical error message indicating that
+#      an operation has failed. Automatically prepends the message with
+#      "ERROR: ".
+#   8. icon_ci_log_fatal_msg(): emits a critical error message (using
+#      icon_ci_log_error_msg()) and immediately terminates execution with an
+#      exit status of 1.
+#
+.utils:log:
+  before_script:
+    - |
+      # !reference [.utils:log, before_script]
+      test yes = "${icon_ci_utils_log_skip-}" || {
+        icon_ci_log_style_default="\e[0m"
+        icon_ci_log_style_section="\e[1;38;5;214m"
+        icon_ci_log_style_status="\e[1;38;5;183m"
+        icon_ci_log_style_note="\e[1;38;5;111m"
+        icon_ci_log_style_warn="\e[0;33m"
+        icon_ci_log_style_error="\e[1;31m"
+        icon_ci_log_section_stack='iconci'
+        icon_ci_log_shopts_stack='icon_ci_shopts'
+        icon_ci_log_shopts_pop=
+        icon_ci_log_section_start ()
+        {
+          {
+            icon_ci_log_section_stack="${icon_ci_log_section_stack}_$(od -An -N4 -tx1 /dev/urandom | tr -d ' ')"
+            echo -e "\e[0Ksection_start:$(date +%s):${icon_ci_log_section_stack}[${2:-collapsed=true}]\r\e[0K${icon_ci_log_style_section}${1:-'unknown'}${icon_ci_log_style_default}"
+          } 2>/dev/null
+        }
+        icon_ci_log_section_end ()
+        {
+          {
+            echo -e "\e[0Ksection_end:$(date +%s):${icon_ci_log_section_stack}\r\e[0K"
+            icon_ci_log_section_stack=${icon_ci_log_section_stack%_*}
+          } 2>/dev/null
+        }
+        icon_ci_log_shopts_push ()
+        {
+          {
+            icon_ci_log_shopts_stack="${icon_ci_log_shopts_stack}_"
+            eval "${icon_ci_log_shopts_stack}=\$(set +o)"
+            case $- in
+              *e*) eval "${icon_ci_log_shopts_stack}=\"\${${icon_ci_log_shopts_stack}}; set -e\"" ;;
+            esac
+            eval "${icon_ci_log_shopts_stack}=\"\${${icon_ci_log_shopts_stack}}
+        icon_ci_log_shopts_pop=\\\${${icon_ci_log_shopts_stack%_}:-}
+        unset ${icon_ci_log_shopts_stack}\""
+            eval "icon_ci_log_shopts_pop=\${${icon_ci_log_shopts_stack}}"
+          } 2>/dev/null
+        }
+        icon_ci_log_status_msg ()
+        {
+          { echo -e "${icon_ci_log_style_status}${1}${icon_ci_log_style_default}"; } 2>/dev/null
+        }
+        icon_ci_log_note_msg ()
+        {
+          { echo -e "${icon_ci_log_style_note}${1}${icon_ci_log_style_default}"; } 2>/dev/null
+        }
+        icon_ci_log_warn_msg ()
+        {
+          { echo -e "${icon_ci_log_style_warn}WARNING: ${1}${icon_ci_log_style_default}"; } 2>/dev/null
+        }
+        icon_ci_log_error_msg ()
+        {
+          { echo -e "${icon_ci_log_style_error}ERROR: ${1}${icon_ci_log_style_default}"; } 2>/dev/null
+        }
+        icon_ci_log_fatal_msg ()
+        {
+          {
+            icon_ci_log_error_msg "${1}"
+            exit 1
+          } 2>/dev/null
+        }
+        icon_ci_utils_log_skip=yes
+      }
+
+# Implements a before_script that defines a shell function for log stream
+# processing, including optional regex filtering, file duplication, and
+# timestamp generation.
+#
+# The script defines the following shell functions:
+#   1. icon_ci_log_filter(): reads the standard input stream and processes it
+#      according to the configured environment variables (see below).
+#      Accepts the following positional arguments:
+#        - $1 (defaults to `1`): the number of initial lines to be output
+#          unconditionally, bypassing the regular expression filter.
+#
+# Jobs that invoke icon_ci_log_filter() must ensure that their runtime
+# environments provide the perl command.
+#
+.utils:log:filter:
+  variables:
+    # Perl-Compatible Regular Expression (PCRE) string used to filter the output
+    # of a piped command. If set to a non-empty string, only matching lines are
+    # emitted to the standard output stream:
+    ICON_CI_UTILS_LOG_FILTER_REGEX: null
+
+    # Absolute path to a file where the full, unfiltered log stream is saved:
+    #   Hint: to upload the full log as an artifact, extend the artifacts
+    #   section of the job:
+    #     artifacts:
+    #       paths:
+    #         - ${ICON_CI_UTILS_LOG_PATH}
+    #     when: always
+    ICON_CI_UTILS_LOG_PATH: null
+
+    # Boolean that controls whether millisecond-precision timestamps are
+    # prepended to the lines saved in the full log file:
+    ICON_CI_UTILS_LOG_TIMESTAMPS: null
+  before_script:
+    - |
+      # !reference [.utils:log:filter, before_script]
+      icon_ci_log_filter()
+      (
+        if {
+          test -z "${ICON_CI_UTILS_LOG_FILTER_REGEX-}${ICON_CI_UTILS_LOG_PATH-}"
+        } 2>/dev/null
+        then
+          cat
+        else
+          {
+            test -z "${ICON_CI_UTILS_LOG_FILTER_REGEX-}" || \
+              icon_ci_log_note_msg \
+                "Log filtering is enabled. Only lines matching the regex \
+      '${ICON_CI_UTILS_LOG_FILTER_REGEX}' will be printed to the job log."
+            test -z "${ICON_CI_UTILS_LOG_PATH-}" || \
+              icon_ci_log_status_msg \
+                "The full log is being saved to '${ICON_CI_UTILS_LOG_PATH}'"
+          } 2>/dev/null
+          if {
+            test -z "${ICON_CI_UTILS_LOG_FILTER_REGEX-}" && \
+              test true != "${ICON_CI_UTILS_LOG_TIMESTAMPS:-false}"
+          } 2>/dev/null
+          then
+            tee -a "${ICON_CI_UTILS_LOG_PATH}"
+          else
+            perl -e '
+      binmode STDIN; binmode STDOUT; $|=1;
+      my ($raw_regex, $log_path, $raw_ts, $pass_lines) = @ARGV;
+      my $regex = length($raw_regex) ? qr/$raw_regex/ : undef;
+      my $enable_ts = $raw_ts eq "true";
+      if ($log_path) {
+        if ($enable_ts) {
+          require POSIX; require Time::HiRes;
+        }
+        open FULL_LOG, ">>", $log_path or die "Log error: $!\n";
+        select((select(FULL_LOG), $|=1)[0]);
+      }
+      my ($last_sec, $base_time_str) = (0, "");
+      while (<STDIN>) {
+        if ($log_path) {
+          if ($enable_ts) {
+            my ($sec, $usec) = Time::HiRes::gettimeofday();
+            $base_time_str = POSIX::strftime("%FT%T", localtime($last_sec = $sec)) if $sec != $last_sec;
+            print FULL_LOG $base_time_str, sprintf(".%03.0f: ", $usec/1000), $_;
+          } else {
+            print FULL_LOG $_;
+          }
+        }
+        print if $. <= $pass_lines || !$regex || $_ =~ $regex;
+      }
+      '       "${ICON_CI_UTILS_LOG_FILTER_REGEX-}" \
+              "${ICON_CI_UTILS_LOG_PATH-}" \
+              "${ICON_CI_UTILS_LOG_TIMESTAMPS-}" \
+              "${1:-1}"
+          fi
+        fi
+      )

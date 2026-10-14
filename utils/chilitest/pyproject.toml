@@ -1,0 +1,32 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chilitest"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "xarray",
+    "matplotlib",
+    "jinja2",
+    # ICON/CDI output is blosc-compressed netCDF4; the plain netcdf4 backend
+    # needs the hdf5plugin package to decode it.
+    "netcdf4",
+    "hdf5plugin",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]

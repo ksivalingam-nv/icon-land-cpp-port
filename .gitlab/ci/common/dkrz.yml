@@ -1,0 +1,262 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+spec:
+  inputs:
+    warn-if-levante-cpu-inactive:
+      type: boolean
+      default: true
+      description: inject a warning job if dkrz:levante:cpu is inactive
+
+    warn-if-levante-gpu-inactive:
+      type: boolean
+      default: true
+      description: inject a warning job if dkrz:levante:gpu is inactive
+
+    levante-cpu-inactive-prefix:
+      rules:
+        - if: $[[ inputs.warn-if-levante-cpu-inactive ]] == false
+          default: "."
+        - default: ""
+
+    levante-gpu-inactive-prefix:
+      rules:
+        - if: $[[ inputs.warn-if-levante-gpu-inactive ]] == false
+          default: "."
+        - default: ""
+
+---
+
+include:
+  - project: anw_dienste/ci-templates
+    file: .slurm-ci.yml
+  - project: icon/ci-tooling/icon-builders-status
+    ref: status
+    file: dkrz.yml
+  - local: .gitlab/ci/common/warning.yml
+
+# Implements the recommended default template for a job run by the Jacamar
+# GitLab runner in the CPU partitions of Levante at DKRZ. Sets reasonable
+# default parameters for the scheduler (SLURM) and git, as well as runs basic
+# environment sanitation.
+#
+.common:dkrz:levante:cpu:
+  extends:
+    - .default
+    - .utils:log
+    - .utils:shell:homeless
+    - .utils:git:clone
+  variables:
+    # SLURM account to charge resources to (--account):
+    ICON_CI_COMMON_DKRZ_SLURM_ACCOUNT: ka1125
+
+    # Comma-separated list of SLURM partitions for the resource allocation
+    # (--partition):
+    ICON_CI_COMMON_DKRZ_SLURM_PARTITION: shared,compute
+
+    # Number of nodes to allocate for the job (--nodes):
+    ICON_CI_COMMON_DKRZ_SLURM_NNODES: 1
+
+    # Number of tasks the job runs (--ntasks):
+    ICON_CI_COMMON_DKRZ_SLURM_NTASKS: 8
+
+    # Number of GPUs required for the job on each node (--gpus-per-node):
+    ICON_CI_COMMON_DKRZ_SLURM_GPUS_PER_NODE: 0
+
+    # Limit on the total run time of the job allocation (--time):
+    ICON_CI_COMMON_DKRZ_SLURM_TIMELIMIT: "05:00"
+
+    # Space-separated list of extra SBATCH parameters:
+    ICON_CI_COMMON_DKRZ_SLURM_EXTRA_PARAMETERS: null
+
+    # Non-existent unique path on a local (for each node in the allocation),
+    # temporary (cleaned up when the job finishes), and fast (in-memory)
+    # filesystem partition:
+    #   Hint: intended for cloning the repository or setting up workspaces
+    #   to significantly accelerate file I/O operations, for example:
+    #     variables:
+    #       ICON_CI_UTILS_GIT_CLONE_PATH: ${ICON_CI_COMMON_DKRZ_LOCAL_TEMP_FAST_PATH}
+    ICON_CI_COMMON_DKRZ_LOCAL_TEMP_FAST_PATH: >-
+      /dev/shm/icon-${CI_JOB_NAME_SLUG}-${CI_JOB_ID}
+
+    # Non-existent unique path on a shared (accessible by all nodes in the
+    # allocation), long-lived (subject to a 14-day retention period), and slow
+    # (parallel file system) filesystem partition:
+    #   Hint: intended for storing large job artifacts that exceed size limits.
+    ICON_CI_COMMON_DKRZ_SHARED_LONG_SLOW_PATH: >-
+      /scratch/k/k202125/data/CI/${CI_PIPELINE_CREATED_AT}-${CI_JOB_NAME_SLUG}-${CI_JOB_ID}
+
+    # Internal variables:
+    GIT_SUBMODULE_STRATEGY: normal
+    GIT_FETCH_EXTRA_FLAGS: --quiet --filter=blob:none
+    GIT_SUBMODULE_UPDATE_FLAGS: --jobs=8
+    GIT_DEPTH: 1
+    SCHEDULER_PARAMETERS: >-
+      --account=${ICON_CI_COMMON_DKRZ_SLURM_ACCOUNT}
+      --partition=${ICON_CI_COMMON_DKRZ_SLURM_PARTITION}
+      --nodes=${ICON_CI_COMMON_DKRZ_SLURM_NNODES}
+      --ntasks=${ICON_CI_COMMON_DKRZ_SLURM_NTASKS}
+      --gpus-per-node=${ICON_CI_COMMON_DKRZ_SLURM_GPUS_PER_NODE}
+      --time=${ICON_CI_COMMON_DKRZ_SLURM_TIMELIMIT}
+      ${ICON_CI_COMMON_DKRZ_SLURM_EXTRA_PARAMETERS}
+    ICON_CI_UTILS_SHELL_FAKE_HOME_PATH: >-
+      ${ICON_CI_COMMON_DKRZ_LOCAL_TEMP_FAST_PATH}/home
+    ICON_CI_UTILS_SHELL_CHECK_BYPASS_VAR: JACAMAR_CI_SHELL
+    ICON_CI_UTILS_SHELL_CHECK_EXTRA_BYPASS_VARS: SPACK_DISABLE_LOCAL_CONFIG
+  before_script:
+    - !reference [.utils:log, before_script]
+    - !reference [.utils:shell:homeless, before_script]
+    - |
+      # !reference [.common:dkrz:levante:cpu, before_script]
+      icon_ci_log_status_msg \
+        "Running in SLURM partition '${SLURM_JOB_PARTITION:-unknown}' \
+      with allocation '${SLURM_JOB_NODELIST:-unknown}' \
+      (${SLURM_JOB_NUM_NODES:-unknown} node(s))"
+      module --verbose purge
+      module --verbose load git
+      # Ensure a curl new enough
+      PATH="/sw/spack-levante/curl-8.5.0-x4vr7a/bin:${PATH}"
+      export PATH
+    - !reference [.utils:git:clone, before_script]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - !reference [.status:dkrz:levante:cpu:if_inactive:never, rules]
+    - if: $CI
+
+# A warning job that runs when the CPU partition of Levante at DKRZ is inactive.
+#
+"$[[ inputs.levante-cpu-inactive-prefix ]]'dkrz:levante:cpu' is inactive":
+  extends: .common:warning:resource_inactive
+  rules: !reference [.status:dkrz:levante:cpu:if_inactive, rules]
+
+# Implements the recommended default template for a job run by the Jacamar
+# GitLab runner in the GPU partitions of Levante at DKRZ. Sets reasonable
+# default parameters for the scheduler (SLURM) and git, as well as runs basic
+# environment sanitation.
+#
+.common:dkrz:levante:gpu:
+  extends: .common:dkrz:levante:cpu
+  variables:
+    ICON_CI_COMMON_DKRZ_SLURM_PARTITION: gpu
+    ICON_CI_COMMON_DKRZ_SLURM_GPUS_PER_NODE: 1
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - !reference [.status:dkrz:levante:gpu:if_inactive:never, rules]
+    - if: $CI
+
+# A warning job that runs when the GPU partition of Levante at DKRZ is inactive.
+#
+"$[[ inputs.levante-gpu-inactive-prefix ]]'dkrz:levante:gpu' is inactive":
+  extends: .common:warning:resource_inactive
+  rules: !reference [.status:dkrz:levante:gpu:if_inactive, rules]
+
+# Implements the recommended default template for a job that builds ICON on
+# Levante at DKRZ.
+#
+.common:dkrz:levante:icon:build:
+  extends:
+    - .common:dkrz:levante:cpu
+    - .utils:icon:build
+  stage: system
+  needs: []
+  variables:
+    ICON_CI_COMMON_DKRZ_SLURM_NTASKS: 32
+    ICON_CI_COMMON_DKRZ_SLURM_TIMELIMIT: "20:00"
+    ICON_CI_UTILS_GIT_CLONE_PATH: ${ICON_CI_COMMON_DKRZ_LOCAL_TEMP_FAST_PATH}/icon
+    ICON_CI_UTILS_ICON_SOURCE_PATH: ${ICON_CI_UTILS_GIT_CLONE_PATH}
+    ICON_CI_UTILS_ICON_BUILD_JOB_COUNT: ${ICON_CI_COMMON_DKRZ_SLURM_NTASKS}
+  before_script:
+    - !reference [.common:dkrz:levante:cpu, before_script]
+    - !reference [.utils:icon:build, before_script]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - !reference [.status:dkrz:levante:cpu:if_inactive:never, rules]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+    - if: $CI
+
+# Implements the recommended default template for a job that runs ICON on
+# the CPU partition of Levante at DKRZ.
+#
+.common:dkrz:levante:cpu:icon:run:
+  extends:
+    - .common:dkrz:levante:cpu
+    - .utils:icon:run
+  stage: system
+  needs: []
+  variables:
+    ICON_CI_COMMON_DKRZ_SLURM_PARTITION: compute
+    ICON_CI_COMMON_DKRZ_SLURM_NTASKS: 256
+    ICON_CI_UTILS_GIT_SPARSE_PATTERNS: >-
+      /utils/ /run/ /${ICON_CI_UTILS_ICON_MKEXP_CONFIG_REL_PATH}
+    ICON_CI_UTILS_PY_VENV_PATH: ${ICON_CI_COMMON_DKRZ_LOCAL_TEMP_FAST_PATH}/venv
+    ICON_CI_UTILS_ICON_MKEXP_ACCOUNT: ${ICON_CI_COMMON_DKRZ_SLURM_ACCOUNT}
+  before_script:
+    - !reference [.common:dkrz:levante:cpu, before_script]
+    - !reference [.utils:icon:run, before_script]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - !reference [.status:dkrz:levante:cpu:if_inactive:never, rules]
+    - if: $CI
+
+# Implements the recommended default template for a job that runs ICON on
+# the GPU partition of Levante at DKRZ.
+#
+.common:dkrz:levante:gpu:icon:run:
+  extends: .common:dkrz:levante:cpu:icon:run
+  variables:
+    ICON_CI_COMMON_DKRZ_SLURM_PARTITION: !reference [.common:dkrz:levante:gpu, variables, ICON_CI_COMMON_DKRZ_SLURM_PARTITION]
+    ICON_CI_COMMON_DKRZ_SLURM_NTASKS: 4
+    ICON_CI_COMMON_DKRZ_SLURM_GPUS_PER_NODE: 4
+    # Levante GPU run wrapper does not handle non-exclusive allocations:
+    ICON_CI_COMMON_DKRZ_SLURM_EXTRA_PARAMETERS: --exclusive
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+    # We build on the CPU partition and have nothing to run if it is inactive:
+    - !reference [.status:dkrz:levante:cpu:if_inactive:never, rules]
+    - !reference [.status:dkrz:levante:gpu:if_inactive:never, rules]
+    - if: $CI
+
+# Implements the recommended default template for a job run by the Jacamar
+# GitLab runner on the MI300A node of DKRZ test cluster
+#
+.common:dkrz:mi300a:
+  extends: .utils:log
+  variables:
+    ICON_CI_COMMON_DKRZ_SLURM_PARTITION: gh-mi300a
+    ICON_CI_COMMON_DKRZ_SLURM_NNODES: 1
+    ICON_CI_COMMON_DKRZ_SLURM_TIMELIMIT: "15:00"
+    ICON_CI_COMMON_DKRZ_SLURM_EXTRA_PARAMETERS: null
+
+    # Internal variables:
+    SCHEDULER_PARAMETERS: >-
+      --partition=${ICON_CI_COMMON_DKRZ_SLURM_PARTITION}
+      --nodes=${ICON_CI_COMMON_DKRZ_SLURM_NNODES}
+      --time=${ICON_CI_COMMON_DKRZ_SLURM_TIMELIMIT}
+      ${ICON_CI_COMMON_DKRZ_SLURM_EXTRA_PARAMETERS}
+  before_script:
+    - !reference [.utils:log, before_script]
+    - |
+      # !reference [.common:dkrz:mi300a, before_script]
+      icon_ci_log_status_msg \
+        "Running in SLURM partition '${SLURM_JOB_PARTITION:-unknown}' \
+      with allocation '${SLURM_JOB_NODELIST:-unknown}'"
+      export LD_LIBRARY_PATH="/opt/rocm/lib:${LD_LIBRARY_PATH-}"
+  id_tokens:
+    CI_JOB_JWT:
+      aud: "$CI_SERVER_URL"
+  tags:
+    - mi300a
+  rules:
+    - when: manual

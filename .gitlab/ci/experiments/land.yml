@@ -1,0 +1,17 @@
+# ICON
+#
+# ---------------------------------------------------------------
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# Contact information: icon-model.org
+#
+# See AUTHORS.TXT for a list of authors
+# See LICENSES/ for license information
+# SPDX-License-Identifier: BSD-3-Clause
+# ---------------------------------------------------------------
+
+# See README.md for more information
+
+.experiments:land:jsb-standalone:
+  variables:
+    ICON_CI_UTILS_ICON_MKEXP_CONFIG_REL_PATH: run/checksuite.icon-land/test_jsb_standalone.config
+    ICON_CI_UTILS_ICON_MKEXP_EXTRA_ARGS: EXP_OPTIONS+=serial,test/suite

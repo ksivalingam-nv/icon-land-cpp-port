@@ -1,0 +1,41 @@
+#%#- ICON
+#%#-
+#%#- ---------------------------------------------------------------
+#%#- Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+#%#- Contact information: icon-model.org
+#%#-
+#%#- See AUTHORS.TXT for a list of authors
+#%#- See LICENSES/ for license information
+#%#- SPDX-License-Identifier: BSD-3-Clause
+#%#- ---------------------------------------------------------------
+#%#
+#%# Collection of macros to launche the run
+#%#
+#
+# $Id: run/mkexp/defaults/launcher.tmpl 0 2026-01-14 13:35:33Z k202123 $
+
+#% macro define_MODEL_executable(JOB, BIN_DIR, model_exe):
+#% if JOB.hybrid is defined
+export MODEL_oce="%{JOB.hybrid.oce.exec}"
+export MODEL_atm="%{JOB.hybrid.atm.exec}"
+#% else
+export MODEL="%{BIN_DIR}/%{model_exe}"
+#% endif
+#%- endmacro
+
+
+#%  macro check_MODEL_executable(JOB):
+#%  if JOB.hybrid is defined
+test -x ${MODEL_oce} || echo "${MODEL_oce} does not exist?"
+test -x ${MODEL_atm} || echo "${MODEL_atm} does not exist?"
+#%    if JOB.debug_level|d(0)|int >= 2:
+%{JOB.ldd} ${MODEL_oce}
+%{JOB.ldd} ${MODEL_atm}
+#%    endif
+#%  else
+test -x ${MODEL} || echo "${MODEL} does not exist?"
+#%    if JOB.debug_level|d(0)|int >= 2:
+%{JOB.ldd} ${MODEL}
+#%    endif
+#%  endif
+#%- endmacro

@@ -1,0 +1,117 @@
+#! %{JOB.python3} #%# -*- mode: python -*- vi: set ft=python :
+#%#- ICON
+#%#-
+#%#- ---------------------------------------------------------------
+#%#- Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+#%#- Contact information: icon-model.org
+#%#-
+#%#- See AUTHORS.TXT for a list of authors
+#%#- See LICENSES/ for license information
+#%#- SPDX-License-Identifier: BSD-3-Clause
+#%#- ---------------------------------------------------------------
+
+"""\
+Configure hierarchical data request for hiopy
+
+Generate data request configuration using parse_data_request module
+"""
+
+import argparse
+import json
+import sys
+import os
+import zarr
+
+#% include 'mkexp/defaults/logging.tmpl'
+
+#% if "proleptic gregorian" not in CALENDAR:
+#% do die("Hiopy supports only the proleptic gregorian calendar. Reconfigure with this calendar to use hiopy.")
+#% endif
+
+# Add the necessary scripts for python
+module_path = os.path.join('%{MODEL_DIR}', 'run', 'mkexp', 'defaults', 'hiopy')
+sys.path.insert(0, module_path)
+
+#%  if hiopy.grid.type == "healpix":
+from init_hierarchy import init_data_request as init_hierarchial_dataset
+#%  else:
+from init_model_grid import init_data_request as init_model_grid_dataset
+#%  endif
+from create_datarequest_config import parse_data_request
+
+user_config = %{namelists.hiopy}
+
+command_line = argparse.ArgumentParser(description=__doc__.split('\n', 1)[0])
+command_line.add_argument('--destructive', action='store_true', help=
+    'create new file based Zarr store instead of appending. '
+    'This will destroy any data in the Zarr store!')
+args = command_line.parse_args()
+
+try:
+    logging.info(f"Time aggregations used for this experiment: %{hiopy.time_agg}")
+
+    data_request = parse_data_request(user_config, %{hiopy.time_agg}, %{hiopy.grid})
+
+    data_request_config_file = os.path.join('%{DATA_DIR}', 'hiopy_data_request.json')
+    with open(data_request_config_file, 'w') as f:
+        json.dump(data_request, f, indent=2)
+
+    logging.info(f"Data request config containing {len(data_request)} data groups stored under: {data_request_config_file}")
+
+    zarr_store_path = ""
+#% if hiopy.storage_backend == 's3':
+    import fsspec
+    zarr_store_path = "%{hiopy.storage.s3.bucket}/%{hiopy.relative_path_to_dataset}"
+    fs = fsspec.filesystem("s3",
+                            key=os.environ["S3_KEY"],
+                            secret=os.environ["S3_SECRET"],
+                            endpoint_url="%{hiopy.storage.s3.endpoint_url}",
+                            asynchronous=True)
+    store = zarr.storage.FsspecStore(fs=fs, path=zarr_store_path)
+    dataset = zarr.open_group(store=store, zarr_format=%{hiopy.zarr_format | default(3)}, mode="w")
+#% else:
+    zarr_store_path = "%{DATA_DIR}/%{hiopy.relative_path_to_dataset}"
+    dataset = zarr.open_group(zarr_store_path, zarr_format=%{hiopy.zarr_format | default(3)},
+        mode=("w" if args.destructive else "a"))
+#% endif
+
+    simulation_params = {
+        "start_date": '%{INITIAL_DATE}',
+        "end_date": '%{FINAL_DATE}',
+        "simulated_hours_per_chunk": %{hiopy.simulated_hours_per_chunk|d(24)|int},
+        "chunks_per_shard": %{hiopy.chunks_per_shard|d(1)|int},
+        "attribution": {
+            "source": "ICON Model",
+            "references": "https://www.icon-model.org/",
+            "license": "Creative Commons CC BY 4.0. https://creativecommons.org/licenses/by/4.0/",
+            "institution": "Max Planck Institute for Meteorology",
+            "citation": "",
+            "creator_name": "",
+            "creator_email": ""
+            }
+    }
+
+    # Load or create variable names dictionary
+    #%  if JOB.var_names_dict_file is defined:
+    var_names_dict_file = '%{JOB.var_names_dict_file}'
+    with open(var_names_dict_file, 'r') as f:
+        var_names_dict = json.load(f)
+    #%  else:
+    # Use default empty dictionary if no var_names mapping provided
+    var_names_dict = %{hiopy.var_names_dict|d({})}
+    #%  endif
+
+    logging.info(f"Simulation period: {simulation_params['start_date']} to {simulation_params['end_date']}")
+    #%  if hiopy.grid.type == "healpix":
+    init_hierarchial_dataset(dataset, data_request, simulation_params, var_names_dict)
+    #%  else:
+    init_model_grid_dataset(dataset, data_request, simulation_params, var_names_dict)
+    #%  endif
+
+    dataset.attrs.update(simulation_params["attribution"])
+    logging.info(f"Successfully initialized zarr store at {zarr_store_path}")
+    sys.exit(0)
+
+except Exception as e:
+    logging.error(f"Error initializing zarr store for the experiment: {e}")
+    sys.exit(1)

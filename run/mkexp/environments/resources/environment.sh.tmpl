@@ -1,0 +1,21 @@
+#%#- -*- mode: sh -*-
+#%#- ICON
+#%#-
+#%#- ---------------------------------------------------------------
+#%#- Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+#%#- Contact information: icon-model.org
+#%#-
+#%#- See AUTHORS.TXT for a list of authors
+#%#- See LICENSES/ for license information
+#%#- SPDX-License-Identifier: BSD-3-Clause
+#%#- ---------------------------------------------------------------
+#%- extends 'mkexp/environments/resources/format.tmpl'
+#%  block prologue:
+# $Id: run/mkexp/environments/resources/environment.sh.tmpl 1 2026-06-08 16:37:02Z m221078 $
+#%  endblock
+#%  block set:
+export %{var}=%{"'"+val+"'"}
+#%- endblock
+#%  block unset:
+unset %{var}
+#%- endblock

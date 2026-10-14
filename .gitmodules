@@ -1,0 +1,23 @@
+# Copyright (C) 2004-2026, DWD, MPI-M, DKRZ, KIT, ETH, MeteoSwiss
+# SPDX-License-Identifier: CC0-1.0
+[submodule "externals/mtime"]
+	path = externals/mtime
+	url = https://gitlab.dkrz.de/icon-libraries/libmtime.git
+[submodule "externals/cdi"]
+	path = externals/cdi
+	url = https://gitlab.dkrz.de/mpim-sw/libcdi.git
+[submodule "utils/mkexp"]
+	path = utils/mkexp
+	url = https://gitlab.dkrz.de/esmenv/mkexp.git
+[submodule "externals/fortran-support"]
+	path = externals/fortran-support
+	url = https://gitlab.dkrz.de/icon-libraries/libfortran-support.git
+[submodule "externals/iconmath"]
+	path = externals/iconmath
+	url = https://gitlab.dkrz.de/icon-libraries/libiconmath.git
+[submodule "externals/kokkos"]
+	path = externals/kokkos
+	url = https://github.com/kokkos/kokkos.git
+[submodule "externals/memman"]
+	path = externals/memman
+	url = https://gitlab.dkrz.de/icon-libraries/memman.git
